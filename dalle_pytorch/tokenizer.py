@@ -167,8 +167,8 @@ class HugTokenizer:
     def decode(self, tokens, pad_tokens = {}):
         if torch.is_tensor(tokens):
             tokens = tokens.tolist()
-        ignore_ids = pad_tokens.union({0})
-        tokens = [token for token in tokens if token not in ignore_ids]
+        #ignore_ids = pad_tokens.union({0})
+        #tokens = [token for token in tokens if token not in ignore_ids]
         return self.tokenizer.decode(tokens, skip_special_tokens = True)
 
     def encode(self, text):

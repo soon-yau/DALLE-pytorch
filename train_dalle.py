@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset
+from dalle_pytorch.loader import TextImageDataset, MPIIDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
 
 # libraries needed for webdataset support
@@ -44,6 +44,12 @@ parser.add_argument('--vqgan_config_path', type=str, default = None,
 
 parser.add_argument('--image_text_folder', type=str, required=True,
                     help='path to your folder of images and text for learning the DALL-E')
+
+parser.add_argument('--csv_file', type=str, required=False,
+                    help='csv file for MPII')
+
+parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
+                    help='csv file for MPII')
 
 parser.add_argument(
     '--wds', 
@@ -76,6 +82,9 @@ parser.add_argument('--fp16', action='store_true',
 
 parser.add_argument('--amp', action='store_true',
 	help='Apex "O1" automatic mixed precision. More stable than 16 bit precision. Can\'t be used in conjunction with deepspeed zero stages 1-3.')
+
+parser.add_argument('--mpii', action='store_true',
+	help='Use MPII dataset.')
 
 parser.add_argument('--wandb_name', default='dalle_train_transformer',
                     help='Name W&B will use when saving results.\ne.g. `--wandb_name "coco2017-full-sparse"`')
@@ -161,7 +170,7 @@ WEBDATASET_IMAGE_TEXT_COLUMNS = tuple(args.wds.split(','))
 ENABLE_WEBDATASET = True if len(WEBDATASET_IMAGE_TEXT_COLUMNS) == 2 else False
 
 DALLE_OUTPUT_FILE_NAME = args.dalle_output_file_name + ".pt"
-
+CUDA = args.cuda
 VAE_PATH = args.vae_path
 VQGAN_MODEL_PATH = args.vqgan_model_path
 VQGAN_CONFIG_PATH = args.vqgan_config_path
@@ -245,11 +254,12 @@ if RESUME:
 
     dalle_params, vae_params, weights = loaded_obj['hparams'], loaded_obj['vae_params'], loaded_obj['weights']
     opt_state = loaded_obj.get('opt_state')
-    scheduler_state = loaded_obj.get('scheduler_state')
-
+    #scheduler_state = loaded_obj.get('scheduler_state')
+    scheduler_state = None
     if vae_params is not None:
         vae = DiscreteVAE(**vae_params)
     else:
+
         if args.taming:
             vae = VQGanVAE(VQGAN_MODEL_PATH, VQGAN_CONFIG_PATH)
         else:
@@ -373,15 +383,30 @@ if ENABLE_WEBDATASET:
     filtered_dataset = w_dataset.select(filter_dataset)
     ds = filtered_dataset.map_dict(**image_text_mapping).map_dict(**image_mapping).to_tuple(mycap, myimg).batched(BATCH_SIZE, partial=True)
 else:
-    ds = TextImageDataset(
-        args.image_text_folder,
-        text_len=TEXT_SEQ_LEN,
-        image_size=IMAGE_SIZE,
-        resize_ratio=args.resize_ratio,
-        truncate_captions=args.truncate_captions,
-        tokenizer=tokenizer,
-        shuffle=is_shuffle,
-    )
+    if args.mpii:
+    
+        ds = MPIIDataset(
+            args.image_text_folder,
+            args.csv_file,
+            text_len=TEXT_SEQ_LEN,
+            image_size=IMAGE_SIZE,
+            resize_ratio=args.resize_ratio,
+            truncate_captions=args.truncate_captions,
+            tokenizer=tokenizer,
+            shuffle=is_shuffle,
+        )
+
+    else:
+        ds = TextImageDataset(
+            args.image_text_folder,
+            text_len=TEXT_SEQ_LEN,
+            image_size=IMAGE_SIZE,
+            resize_ratio=args.resize_ratio,
+            truncate_captions=args.truncate_captions,
+            tokenizer=tokenizer,
+            shuffle=is_shuffle,
+        )
+    
     assert len(ds) > 0, 'dataset is empty'
 
 if distr_backend.is_root_worker():
@@ -411,32 +436,35 @@ else:
 # initialize DALL-E
 
 dalle = DALLE(vae=vae, **dalle_params)
+#dalle = torch.nn.DataParallel(dalle, device_ids=[0,2,3])
+
 if not using_deepspeed:
     if args.fp16:
         dalle = dalle.half()
-    dalle = dalle.cuda()
-
+    dalle = dalle.to(CUDA)
+    
 if RESUME and not using_deepspeed:
     dalle.load_state_dict(weights)
 
 # optimizer
 
 opt = Adam(get_trainable_params(dalle), lr=LEARNING_RATE)
-if RESUME and opt_state:
-    opt.load_state_dict(opt_state)
+#if RESUME and opt_state:
+#    opt.load_state_dict(opt_state)
 
 if LR_DECAY:
     scheduler = ReduceLROnPlateau(
         opt,
         mode="min",
         factor=0.5,
-        patience=10,
-        cooldown=10,
+        patience=1,
+        cooldown=0,
         min_lr=1e-6,
+        threshold = 0.1,
         verbose=True,
     )
-    if RESUME and scheduler_state:
-        scheduler.load_state_dict(scheduler_state)
+    #if RESUME and scheduler_state:
+    #    scheduler.load_state_dict(scheduler_state)
 else:
     scheduler = None
 
@@ -569,7 +597,7 @@ for epoch in range(resume_epoch, EPOCHS):
             t = time.time()
         if args.fp16:
             images = images.half()
-        text, images = map(lambda t: t.cuda(), (text, images))
+        text, images = map(lambda t: t.to(CUDA), (text, images))
 
         loss = distr_dalle(text, images, return_loss=True)
 
@@ -595,7 +623,8 @@ for epoch in range(resume_epoch, EPOCHS):
                 **log,
                 'epoch': epoch,
                 'iter': i,
-                'loss': avg_loss.item()
+                'loss': avg_loss.item(),
+                'lr': distr_opt.param_groups[0]['lr']
             }
 
         if i % SAVE_EVERY_N_STEPS == 0:

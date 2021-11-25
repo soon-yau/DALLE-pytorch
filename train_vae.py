@@ -7,10 +7,10 @@ from pathlib import Path
 
 import torch
 from torch.optim import Adam
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import ExponentialLR, ReduceLROnPlateau
 
 # vision imports
-
+import torchvision
 from torchvision import transforms as T
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
@@ -68,10 +68,12 @@ model_group.add_argument('--hidden_dim', type = int, default = 256, help = 'hidd
 
 model_group.add_argument('--kl_loss_weight', type = float, default = 0., help = 'KL loss weight')
 
+model_group.add_argument('--cuda', type = int, default = 1, help = 'GPU ID')
+
 args = parser.parse_args()
 
 # constants
-
+DEVICE = f'cuda:{args.cuda}'
 IMAGE_SIZE = args.image_size
 IMAGE_PATH = args.image_folder
 
@@ -138,7 +140,7 @@ vae = DiscreteVAE(
     kl_div_loss_weight = KL_LOSS_WEIGHT
 )
 if not using_deepspeed:
-    vae = vae.cuda()
+    vae = vae.to(DEVICE)
 
 
 assert len(ds) > 0, 'folder does not contain any images'
@@ -149,7 +151,17 @@ if distr_backend.is_root_worker():
 
 opt = Adam(vae.parameters(), lr = LEARNING_RATE)
 sched = ExponentialLR(optimizer = opt, gamma = LR_DECAY_RATE)
-
+'''
+sched = ReduceLROnPlateau(
+    opt,
+    mode="min",
+    factor=0.7,
+    patience=100,
+    cooldown=100,
+    min_lr=1e-6,
+    verbose=True,
+)
+'''
 
 if distr_backend.is_root_worker():
     # weights & biases experiment tracking
@@ -164,7 +176,7 @@ if distr_backend.is_root_worker():
     )
 
     run = wandb.init(
-        project = 'dalle_train_vae',
+        project = 'dalle_train_vae_mpii',
         job_type = 'train_model',
         config = model_config
     )
@@ -222,7 +234,7 @@ temp = STARTING_TEMP
 
 for epoch in range(EPOCHS):
     for i, (images, _) in enumerate(distr_dl):
-        images = images.cuda()
+        images = images.to(DEVICE)
 
         loss, recons = distr_vae(
             images,
@@ -281,6 +293,7 @@ for epoch in range(EPOCHS):
 
         if distr_backend.is_root_worker():
             if i % 10 == 0:
+                #lr = distr_opt.param_groups[0]['lr']
                 lr = distr_sched.get_last_lr()[0]
                 print(epoch, i, f'lr - {lr:6f} loss - {avg_loss.item()}')
 
