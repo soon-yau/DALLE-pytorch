@@ -1,0 +1,7 @@
+common colours: beige,black,blue,brown,gray,green,navy,olive,orange,red,white
+top_colours: ivory
+botom_colours: gold,pink,purple,yellow
+top_styles: bomber,button-down,cardig,checkered button-down,cropped,flannel,leather,polk dotted button-down,polo,pullover,striped button-down,turtleneck
+top_types: jacket,shirt,sweater,t-shirt
+bottom_styles: bubble,mini,palazzo,pleated,wrap
+bottom_types: jeans,pants,skirt,sweatpants,trousers
