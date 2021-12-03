@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset, MPIIDataset
+from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
 
 # libraries needed for webdataset support
@@ -45,11 +45,14 @@ parser.add_argument('--vqgan_config_path', type=str, default = None,
 parser.add_argument('--image_text_folder', type=str, required=True,
                     help='path to your folder of images and text for learning the DALL-E')
 
-parser.add_argument('--csv_file', type=str, required=False,
-                    help='csv file for MPII')
+parser.add_argument('--data_file', type=str, required=False,
+                    help='csv file for MPII/pose')
+
+parser.add_argument('--data_type', type=str, required=False, default='image_text',
+                    help='image_text, mpii, pose')
 
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
-                    help='csv file for MPII')
+                    help='cuda')
 
 parser.add_argument(
     '--wds', 
@@ -82,9 +85,6 @@ parser.add_argument('--fp16', action='store_true',
 
 parser.add_argument('--amp', action='store_true',
 	help='Apex "O1" automatic mixed precision. More stable than 16 bit precision. Can\'t be used in conjunction with deepspeed zero stages 1-3.')
-
-parser.add_argument('--mpii', action='store_true',
-	help='Use MPII dataset.')
 
 parser.add_argument('--wandb_name', default='dalle_train_transformer',
                     help='Name W&B will use when saving results.\ne.g. `--wandb_name "coco2017-full-sparse"`')
@@ -200,7 +200,7 @@ SHIFT_TOKENS = args.shift_tokens
 ROTARY_EMB = args.rotary_emb
 
 ATTN_TYPES = tuple(args.attn_types.split(','))
-
+DATA_TYPE = args.data_type
 DEEPSPEED_CP_AUX_FILENAME = 'auxiliary.pt'
 
 if not ENABLE_WEBDATASET:
@@ -297,7 +297,6 @@ else:
             vae = OpenAIDiscreteVAE()
 
     IMAGE_SIZE = vae.image_size
-
     dalle_params = dict(
         num_text_tokens=tokenizer.vocab_size,
         text_seq_len=TEXT_SEQ_LEN,
@@ -313,6 +312,7 @@ else:
         stable=STABLE,
         shift_tokens=SHIFT_TOKENS,
         rotary_emb=ROTARY_EMB,
+        use_pose=True if DATA_TYPE=='pose'  else False
     )
     resume_epoch = 0
 
@@ -383,11 +383,21 @@ if ENABLE_WEBDATASET:
     filtered_dataset = w_dataset.select(filter_dataset)
     ds = filtered_dataset.map_dict(**image_text_mapping).map_dict(**image_mapping).to_tuple(mycap, myimg).batched(BATCH_SIZE, partial=True)
 else:
-    if args.mpii:
-    
+    if DATA_TYPE == 'mpii':
         ds = MPIIDataset(
             args.image_text_folder,
-            args.csv_file,
+            args.data_file,
+            text_len=TEXT_SEQ_LEN,
+            image_size=IMAGE_SIZE,
+            resize_ratio=args.resize_ratio,
+            truncate_captions=args.truncate_captions,
+            tokenizer=tokenizer,
+            shuffle=is_shuffle,
+        )
+    elif DATA_TYPE == 'pose':
+        ds = PoseDataset(
+            args.image_text_folder,
+            args.data_file,
             text_len=TEXT_SEQ_LEN,
             image_size=IMAGE_SIZE,
             resize_ratio=args.resize_ratio,
@@ -592,14 +602,15 @@ save_model(DALLE_OUTPUT_FILE_NAME, epoch=resume_epoch)
 for epoch in range(resume_epoch, EPOCHS):
     if data_sampler:
         data_sampler.set_epoch(epoch)
-    for i, (text, images) in enumerate((dl if ENABLE_WEBDATASET else distr_dl)):
+    for i, (text, images, poses) in enumerate((dl if ENABLE_WEBDATASET else distr_dl)):
         if i % 10 == 0 and distr_backend.is_root_worker():
             t = time.time()
         if args.fp16:
             images = images.half()
-        text, images = map(lambda t: t.to(CUDA), (text, images))
 
-        loss = distr_dalle(text, images, return_loss=True)
+        text, images, poses = map(lambda t: t.to(CUDA), (text, images, poses))
+
+        loss = distr_dalle(text, images, poses, return_loss=True)
 
         if using_deepspeed:
             distr_dalle.backward(loss)
@@ -630,7 +641,7 @@ for epoch in range(resume_epoch, EPOCHS):
         if i % SAVE_EVERY_N_STEPS == 0:
             save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
-        if i % 100 == 0:
+        if i % 2 == 0:
             if distr_backend.is_root_worker():
                 sample_text = text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
@@ -638,8 +649,9 @@ for epoch in range(resume_epoch, EPOCHS):
 
                 if not avoid_model_calls:
                     # CUDA index errors when we don't guard this
-                    image = dalle.generate_images(text[:1], filter_thres=0.9)  # topk sampling at 0.9
-
+                    image, pose = dalle.generate_images(text[:1], poses[1:2], filter_thres=0.9)  # topk sampling at 0.9
+                    import pdb
+                    pdb.set_trace()
 
                 log = {
                     **log,
