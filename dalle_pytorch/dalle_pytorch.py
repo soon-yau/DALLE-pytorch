@@ -481,6 +481,7 @@ class DALLE(nn.Module):
             out = torch.cat((out, indices), dim = -1)
 
         for cur_len in range(out.shape[1], total_len):
+            print("cur_len", cur_len)
             is_image = cur_len >= text_seq_len
 
             text, image = out[:, :text_seq_len], out[:, text_seq_len:]
@@ -543,7 +544,8 @@ class DALLE(nn.Module):
 
             image_len = image.shape[1]
             image_emb = self.image_emb(image)
-
+            import pdb
+            pdb.set_trace()
             image_emb += self.image_pos_emb(image_emb)
 
             tokens = torch.cat((tokens, image_emb), dim = 1)
