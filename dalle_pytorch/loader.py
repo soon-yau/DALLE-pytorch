@@ -17,7 +17,8 @@ class PoseDataset(Dataset):
                  truncate_captions=False,
                  resize_ratio=0.75,
                  tokenizer=None,
-                 shuffle=False
+                 shuffle=False,
+                 threshold=0.35,
                  ):
         """
         @param folder: Folder containing images and text files matched by their paths' respective "stem"
@@ -26,6 +27,7 @@ class PoseDataset(Dataset):
         super().__init__()
         self.shuffle = shuffle
         df = pd.read_pickle(pickle_file)
+        df = df[df.pose_score > threshold]
         
         root_dir = Path(folder)
         image_dir = root_dir / "images/"

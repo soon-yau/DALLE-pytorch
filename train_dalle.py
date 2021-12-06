@@ -467,14 +467,14 @@ if LR_DECAY:
         opt,
         mode="min",
         factor=0.5,
-        patience=1,
+        patience=0,
         cooldown=0,
         min_lr=1e-6,
         threshold = 0.1,
         verbose=True,
     )
-    #if RESUME and scheduler_state:
-    #    scheduler.load_state_dict(scheduler_state)
+    if RESUME and scheduler_state:
+        scheduler.load_state_dict(scheduler_state)
 else:
     scheduler = None
 
@@ -598,7 +598,7 @@ def save_model(path, epoch=0):
 
 # Saves a checkpoint before training begins to fail early when mis-configured.
 # See https://github.com/lucidrains/DALLE-pytorch/wiki/DeepSpeed-Checkpoints
-save_model(DALLE_OUTPUT_FILE_NAME, epoch=resume_epoch)
+#save_model(DALLE_OUTPUT_FILE_NAME, epoch=resume_epoch)
 for epoch in range(resume_epoch, EPOCHS):
     if data_sampler:
         data_sampler.set_epoch(epoch)
@@ -641,7 +641,7 @@ for epoch in range(resume_epoch, EPOCHS):
         if i % SAVE_EVERY_N_STEPS == 0:
             save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
-        if i % 2 == 0:
+        if i % 500 == 0:
             if distr_backend.is_root_worker():
                 sample_text = text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
@@ -649,15 +649,17 @@ for epoch in range(resume_epoch, EPOCHS):
 
                 if not avoid_model_calls:
                     # CUDA index errors when we don't guard this
-                    image, pose = dalle.generate_images(text[:1], poses[1:2], filter_thres=0.9)  # topk sampling at 0.9
-                    import pdb
-                    pdb.set_trace()
+                    image, pose = dalle.generate_images(text[:1], poses[:1], filter_thres=0.9)  # topk sampling at 0.9
+                    same_pose = torch.cat((pose, image), dim=-1)
+                    image, pose = dalle.generate_images(text[:1], poses[1:2], filter_thres=0.9)
+                    diff_pose = torch.cat((pose, image), dim=-1)
 
                 log = {
                     **log,
                 }
                 if not avoid_model_calls:
-                    log['image'] = wandb.Image(image, caption=decoded_text)
+                    log['same_pose_image'] = wandb.Image(same_pose, caption=decoded_text)
+                    log['diff_pose_image'] = wandb.Image(diff_pose, caption=decoded_text)
 
         if i % 10 == 9 and distr_backend.is_root_worker():
             sample_per_sec = BATCH_SIZE * 10 / (time.time() - t)

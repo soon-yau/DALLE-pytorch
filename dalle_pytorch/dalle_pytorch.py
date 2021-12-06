@@ -500,7 +500,6 @@ class DALLE(nn.Module):
         '''
 
         for cur_len in range(out.shape[1], total_len):
-            print("current_len:", cur_len)
             pose_offset = text_seq_len + pose_seq_len
             is_image = cur_len >= pose_offset
 
@@ -514,7 +513,7 @@ class DALLE(nn.Module):
             probs = F.softmax(filtered_logits / temperature, dim = -1)
             sample = torch.multinomial(probs, 1)
 
-            sample -= (num_text_tokens+num_pose_tokens if is_image else 0) # offset sampled token if it is an image token, since logit space is composed of text and then image tokens
+            sample -= (num_text_tokens if is_image else 0) # offset sampled token if it is an image token, since logit space is composed of text and then image tokens
             out = torch.cat((out, sample), dim=-1)
 
             if out.shape[1] <= pose_offset:
@@ -579,8 +578,6 @@ class DALLE(nn.Module):
 
         if exists(image) and not is_empty(image):
             is_raw_image = len(image.shape) == 4
-            import pdb
-            pdb.set_trace()
 
             if is_raw_image:
                 image_size = self.vae.image_size
