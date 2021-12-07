@@ -327,11 +327,12 @@ class DALLE(nn.Module):
         sandwich_norm = False,
         shift_tokens = True,
         rotary_emb = True,
-        use_pose = False
+        data_type = "image_text",
+        num_pose_dim = 50,
     ):
         super().__init__()
         assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE, VQGanVAE)), 'vae must be an instance of DiscreteVAE'
-        self.use_pose = use_pose
+        self.data_type = data_type
         image_size = vae.image_size
         num_image_tokens = vae.num_tokens
         image_fmap_size = (vae.image_size // (2 ** vae.num_layers))
@@ -341,17 +342,26 @@ class DALLE(nn.Module):
 
         self.text_emb = nn.Embedding(num_text_tokens, dim)
         self.image_emb = nn.Embedding(num_image_tokens, dim)
-
+        
         self.text_pos_emb = nn.Embedding(text_seq_len + 1, dim) if not rotary_emb else always(0) # +1 for <bos>
         self.image_pos_emb = AxialPositionalEmbedding(dim, axial_shape = (image_fmap_size, image_fmap_size)) if not rotary_emb else always(0)
 
         self.num_text_tokens = num_text_tokens # for offsetting logits index and calculating cross entropy loss
         self.num_image_tokens = num_image_tokens
-        self.num_pose_tokens = num_image_tokens if self.use_pose else 0
+        self.num_pose_tokens = 0
 
         self.text_seq_len = text_seq_len
         self.image_seq_len = image_seq_len
-        self.pose_seq_len = image_seq_len if self.use_pose else 0
+        self.pose_seq_len = 0
+
+        if self.data_type == "pose":
+            self.pose_seq_len = image_seq_len
+            self.num_pose_tokens = num_image_tokens
+            self.pose_encoder = self.image_emb
+        elif self.data_type == "pose_kp":
+            self.pose_seq_len = 1
+            self.num_pose_tokens = 1
+            self.pose_encoder = nn.Linear(num_pose_dim, dim)
         seq_len = text_seq_len + image_seq_len + self.pose_seq_len
 
         total_tokens = num_text_tokens + num_image_tokens
@@ -475,16 +485,8 @@ class DALLE(nn.Module):
         out = text
 
         if exists(pose):
-            image_size = vae.image_size
-            assert pose.shape[1] == 3 and pose.shape[2] == image_size and pose.shape[3] == image_size, f'input image must have the correct image size {image_size}'
-
-            indices = vae.get_codebook_indices(pose)
-            #num_img_tokens = default(num_init_img_tokens, int(0.4375 * pose_seq_len))  # OpenAI used 14 * 32 initial tokens to prime
-            num_img_tokens = pose_seq_len
-            #assert num_img_tokens < pose_seq_len, 'number of initial image tokens for priming must be less than the total image token sequence length'
-
-            indices = indices[:, :num_img_tokens]
-            out = torch.cat((out, indices), dim = -1)
+            dummy = torch.zeros(out.shape[0], self.pose_seq_len, dtype=torch.long).to('cuda:3')
+            out = torch.cat((out, dummy), dim = -1)
 
         '''
         if exists(img):
@@ -498,13 +500,11 @@ class DALLE(nn.Module):
             indices = indices[:, :num_img_tokens]
             out = torch.cat((out, indices), dim = -1)
         '''
-
         for cur_len in range(out.shape[1], total_len):
             pose_offset = text_seq_len + pose_seq_len
             is_image = cur_len >= pose_offset
 
-            text, pose, image = out[:, :text_seq_len], \
-                                out[:, text_seq_len:pose_offset], \
+            text, pose, image = out[:, :text_seq_len], pose,\
                                 out[:, pose_offset:]
 
             logits = self(text, image, pose, mask = mask)[:, -1, :]
@@ -515,6 +515,8 @@ class DALLE(nn.Module):
 
             sample -= (num_text_tokens if is_image else 0) # offset sampled token if it is an image token, since logit space is composed of text and then image tokens
             out = torch.cat((out, sample), dim=-1)
+            #import pdb
+            #pdb.set_trace()
 
             if out.shape[1] <= pose_offset:
                 mask = F.pad(mask, (0, 1), value = True)
@@ -523,13 +525,13 @@ class DALLE(nn.Module):
         pose_seq = out[:, text_seq_len:-image_seq_len]
         img_seq = out[:, -image_seq_len:]
         images = vae.decode(img_seq)
-        poses = vae.decode(pose_seq)
+        #poses = #vae.decode(pose_seq)
 
         if exists(clip):
             scores = clip(text_seq, images, return_loss = False)
             return images, scores
 
-        return images, poses
+        return images, pose
 
     def forward(
         self,
@@ -558,18 +560,9 @@ class DALLE(nn.Module):
         seq_len = tokens.shape[1]
 
         if exists(pose) and not is_empty(pose):
-            is_raw_image = len(image.shape) == 4
-
-            if is_raw_image:
-                image_size = self.vae.image_size
-                assert tuple(pose.shape[1:]) == (3, image_size, image_size), f'invalid image of dimensions {image.shape} passed in during training'
-
-                pose = self.vae.get_codebook_indices(pose)
 
             pose_len = pose.shape[1]
-            pose_emb = self.image_emb(pose)
-
-            pose_emb += self.image_pos_emb(pose_emb)
+            pose_emb = self.pose_encoder(pose)
 
             tokens = torch.cat((tokens, pose_emb), dim = 1)
 
@@ -625,16 +618,19 @@ class DALLE(nn.Module):
         # why add offset?
         assert exists(image), 'when training, image must be supplied'
         offset = self.num_text_tokens
-        offsetted_pose = pose + offset
-        offsetted_image = image + offset
+        # fix bug in pose
 
-        labels = torch.cat((text[:, 1:], offsetted_pose, offsetted_image), dim = 1)
+        #offsetted_pose = pose_emb + offset
+        offsetted_image = image + offset
+        #import pdb
+        #pdb.set_trace()        
+        #labels = torch.cat((text[:, 1:], offsetted_pose, offsetted_image), dim = 1)
 
         logits = rearrange(logits, 'b n c -> b c n')
         pose_offset = self.text_seq_len + self.pose_seq_len
-        loss_text = F.cross_entropy(logits[:, :, :self.text_seq_len], labels[:, :self.text_seq_len])
-        loss_pose = F.cross_entropy(logits[:, :, self.text_seq_len:pose_offset], labels[:, self.text_seq_len:pose_offset])
-        loss_img = F.cross_entropy(logits[:, :, pose_offset:], labels[:, pose_offset:])
-
-        loss = (loss_text + loss_pose + self.loss_img_weight * loss_img) / (self.loss_img_weight + 1)
+        loss_text = F.cross_entropy(logits[:, :, :self.text_seq_len], text[:, 1:])
+        loss_img = F.cross_entropy(logits[:, :, pose_offset:], offsetted_image)
+        #loss_pose = F.cross_entropy(logits[:, :, self.text_seq_len:pose_offset], labels[:, self.text_seq_len:pose_offset])
+        loss_pose = F.mse_loss(out[:, self.text_seq_len:pose_offset,:], pose_emb)
+        loss = (loss_text +  10*loss_pose + self.loss_img_weight * loss_img) / (self.loss_img_weight + 1)
         return loss

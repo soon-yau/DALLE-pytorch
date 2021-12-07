@@ -14,8 +14,9 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset
+from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset, PoseKpDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
+#from dalle_pytorch.utils import draw_keypoints
 
 # libraries needed for webdataset support
 import webdataset as wds
@@ -49,7 +50,7 @@ parser.add_argument('--data_file', type=str, required=False,
                     help='csv file for MPII/pose')
 
 parser.add_argument('--data_type', type=str, required=False, default='image_text',
-                    help='image_text, mpii, pose')
+                    help='image_text, mpii, pose, pose_kp')
 
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
                     help='cuda')
@@ -312,7 +313,7 @@ else:
         stable=STABLE,
         shift_tokens=SHIFT_TOKENS,
         rotary_emb=ROTARY_EMB,
-        use_pose=True if DATA_TYPE=='pose'  else False
+        data_type=DATA_TYPE
     )
     resume_epoch = 0
 
@@ -405,8 +406,18 @@ else:
             tokenizer=tokenizer,
             shuffle=is_shuffle,
         )
-
-    else:
+    elif DATA_TYPE == 'pose_kp':
+        ds = PoseKpDataset(
+            args.image_text_folder,
+            args.data_file,
+            text_len=TEXT_SEQ_LEN,
+            image_size=IMAGE_SIZE,
+            resize_ratio=args.resize_ratio,
+            truncate_captions=args.truncate_captions,
+            tokenizer=tokenizer,
+            shuffle=is_shuffle,
+        )
+    elif DATA_TYPE == 'image_text':
         ds = TextImageDataset(
             args.image_text_folder,
             text_len=TEXT_SEQ_LEN,
@@ -416,7 +427,8 @@ else:
             tokenizer=tokenizer,
             shuffle=is_shuffle,
         )
-    
+    else:
+        raise ValueError(f'Invalid dataloader {DATA_TYPE}')
     assert len(ds) > 0, 'dataset is empty'
 
 if distr_backend.is_root_worker():
@@ -602,15 +614,15 @@ def save_model(path, epoch=0):
 for epoch in range(resume_epoch, EPOCHS):
     if data_sampler:
         data_sampler.set_epoch(epoch)
-    for i, (text, images, poses) in enumerate((dl if ENABLE_WEBDATASET else distr_dl)):
+    for i, (text, images, poses, keypoints) in enumerate((dl if ENABLE_WEBDATASET else distr_dl)):
         if i % 10 == 0 and distr_backend.is_root_worker():
             t = time.time()
         if args.fp16:
             images = images.half()
 
-        text, images, poses = map(lambda t: t.to(CUDA), (text, images, poses))
+        text, images, poses, keypoints = map(lambda t: t.to(CUDA), (text, images, poses, keypoints))
 
-        loss = distr_dalle(text, images, poses, return_loss=True)
+        loss = distr_dalle(text, images, keypoints, return_loss=True)
 
         if using_deepspeed:
             distr_dalle.backward(loss)
@@ -641,7 +653,7 @@ for epoch in range(resume_epoch, EPOCHS):
         if i % SAVE_EVERY_N_STEPS == 0:
             save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
-        if i % 500 == 0:
+        if i % 2 == 0:
             if distr_backend.is_root_worker():
                 sample_text = text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
@@ -649,10 +661,10 @@ for epoch in range(resume_epoch, EPOCHS):
 
                 if not avoid_model_calls:
                     # CUDA index errors when we don't guard this
-                    image, pose = dalle.generate_images(text[:1], poses[:1], filter_thres=0.9)  # topk sampling at 0.9
-                    same_pose = torch.cat((pose, image), dim=-1)
-                    image, pose = dalle.generate_images(text[:1], poses[1:2], filter_thres=0.9)
-                    diff_pose = torch.cat((pose, image), dim=-1)
+                    image, kp = dalle.generate_images(text[:1], keypoints[:1], filter_thres=0.9)  # topk sampling at 0.9
+                    same_pose = torch.cat((poses[:1], image), dim=-1)
+                    image, kp = dalle.generate_images(text[:1], keypoints[1:2], filter_thres=0.9)
+                    diff_pose = torch.cat((poses[1:2], image), dim=-1)
 
                 log = {
                     **log,
