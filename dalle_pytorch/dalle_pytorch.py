@@ -328,7 +328,7 @@ class DALLE(nn.Module):
         shift_tokens = True,
         rotary_emb = True,
         data_type = "image_text",
-        num_pose_dim = 50,
+        num_pose_dim = 75,
     ):
         super().__init__()
         assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE, VQGanVAE)), 'vae must be an instance of DiscreteVAE'
@@ -485,7 +485,7 @@ class DALLE(nn.Module):
         out = text
 
         if exists(pose):
-            dummy = torch.zeros(out.shape[0], self.pose_seq_len, dtype=torch.long).to('cuda:3')
+            dummy = torch.zeros(out.shape[0], self.pose_seq_len, dtype=torch.long).to('cuda:2')
             out = torch.cat((out, dummy), dim = -1)
 
         '''
@@ -506,7 +506,6 @@ class DALLE(nn.Module):
 
             text, pose, image = out[:, :text_seq_len], pose,\
                                 out[:, pose_offset:]
-
             logits = self(text, image, pose, mask = mask)[:, -1, :]
 
             filtered_logits = top_k(logits, thres = filter_thres)

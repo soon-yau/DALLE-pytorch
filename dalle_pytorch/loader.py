@@ -34,8 +34,8 @@ class PoseKpDataset(Dataset):
         # normalize keypoints to [0, 1] and flatten to (75,)
         keypoints = list(df.keypoints)
         for i in range(len(keypoints)):
-            #keypoints[i][:,:,:2] = keypoints[i][:,:,:2]/256
-            keypoints[i] = keypoints[i][:,:,:2]/256 # remove confidence
+            keypoints[i][:,:,:2] = keypoints[i][:,:,:2]/256
+            #keypoints[i] = keypoints[i][:,:,:2]/256 # remove confidence
             keypoints[i] = rearrange(keypoints[i], 'a b c -> a (b c)')       
 
         root_dir = Path(folder)

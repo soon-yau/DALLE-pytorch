@@ -653,7 +653,7 @@ for epoch in range(resume_epoch, EPOCHS):
         if i % SAVE_EVERY_N_STEPS == 0:
             save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
-        if i % 2 == 0:
+        if i % 200 == 0:
             if distr_backend.is_root_worker():
                 sample_text = text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
