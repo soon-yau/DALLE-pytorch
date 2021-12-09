@@ -327,7 +327,8 @@ class DALLE(nn.Module):
         sandwich_norm = False,
         shift_tokens = True,
         rotary_emb = True,
-        use_pose = False
+        use_pose = False,
+        pose_downsample = 2,
     ):
         super().__init__()
         assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE, VQGanVAE)), 'vae must be an instance of DiscreteVAE'
@@ -348,10 +349,12 @@ class DALLE(nn.Module):
         self.num_text_tokens = num_text_tokens # for offsetting logits index and calculating cross entropy loss
         self.num_image_tokens = num_image_tokens
         self.num_pose_tokens = num_image_tokens if self.use_pose else 0
+        
+        self.pose_downsample = pose_downsample
 
         self.text_seq_len = text_seq_len
         self.image_seq_len = image_seq_len
-        self.pose_seq_len = image_seq_len if self.use_pose else 0
+        self.pose_seq_len = image_seq_len//(pose_downsample**2) if self.use_pose else 0
         seq_len = text_seq_len + image_seq_len + self.pose_seq_len
 
         total_tokens = num_text_tokens + num_image_tokens
@@ -479,11 +482,19 @@ class DALLE(nn.Module):
             assert pose.shape[1] == 3 and pose.shape[2] == image_size and pose.shape[3] == image_size, f'input image must have the correct image size {image_size}'
 
             indices = vae.get_codebook_indices(pose)
+            if self.pose_downsample > 1:
+                h = int(np.sqrt(indices.shape[-1]))
+                batch_size = indices.shape[0]
+                new_size = h//self.pose_downsample
+                reshaped = torch.reshape(indices, (batch_size, h, h))
+                reshaped = reshaped[:,:new_size,:new_size]
+                indices = torch.reshape(reshaped, (batch_size,-1))
+
             #num_img_tokens = default(num_init_img_tokens, int(0.4375 * pose_seq_len))  # OpenAI used 14 * 32 initial tokens to prime
             num_img_tokens = pose_seq_len
             #assert num_img_tokens < pose_seq_len, 'number of initial image tokens for priming must be less than the total image token sequence length'
 
-            indices = indices[:, :num_img_tokens]
+            indices = indices[:, :num_pose_tokens]
             out = torch.cat((out, indices), dim = -1)
 
         '''
@@ -566,6 +577,16 @@ class DALLE(nn.Module):
 
                 pose = self.vae.get_codebook_indices(pose)
 
+                if self.pose_downsample > 1:
+                    #import pdb
+                    #pdb.set_trace()
+                    h = int(np.sqrt(pose.shape[-1]))
+                    batch_size = pose.shape[0]
+                    new_size = h//self.pose_downsample
+                    reshaped = torch.reshape(pose, (batch_size, h, h))
+                    reshaped = reshaped[:,:new_size,:new_size]
+                    pose = torch.reshape(reshaped, (batch_size,-1))
+                    #pdb.set_trace()
             pose_len = pose.shape[1]
             pose_emb = self.image_emb(pose)
 
