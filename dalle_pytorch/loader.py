@@ -7,6 +7,10 @@ from torch.utils.data import Dataset
 from torchvision import transforms as T
 
 import pandas as pd
+from einops import rearrange
+import numpy as np
+
+from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap
 
 class PoseDataset(Dataset):
     def __init__(self,
@@ -18,17 +22,26 @@ class PoseDataset(Dataset):
                  resize_ratio=0.75,
                  tokenizer=None,
                  shuffle=False,
-                 threshold=0.35,
+                 threshold=0.25,
+                 pose_format='image', # 'image' or 'keypoint' or 'heatmap'
+                 output_shape=(128, 128)
                  ):
         """
         @param folder: Folder containing images and text files matched by their paths' respective "stem"
         @param truncate_captions: Rather than throw an exception, captions which are too long will be truncated.
         """
         super().__init__()
+        self.pose_format = pose_format
         self.shuffle = shuffle
         df = pd.read_pickle(pickle_file)
         df = df[df.pose_score > threshold]
         
+        # normalize keypoints to [0, 1] and flatten to (75,)
+        keypoints = list(df.keypoints)
+        for i in range(len(keypoints)):
+            keypoints[i][:,:,:2] = keypoints[i][:,:,:2]/256
+            #keypoints[i] = rearrange(keypoints[i], 'a b c -> a (b c)')       
+
         root_dir = Path(folder)
         image_dir = root_dir / "images/"
         text_dir = root_dir / "captions/"
@@ -36,15 +49,16 @@ class PoseDataset(Dataset):
 
         keys = list(df.image.map(lambda x: Path(x).stem))
         image_paths = list(df.image.map(lambda x: image_dir/x))
-        pose_paths = list(df.image.map(lambda x: pose_dir/x))
+        #pose_paths = list(df.image.map(lambda x: pose_dir/x))
         text_paths = list(df.image.map(lambda x: text_dir/x.replace('.png','.txt')))
-
+        
         #keys = (image_files.keys() & text_files.keys())
 
         self.keys = list(keys)
         self.image_files = dict(zip(keys, image_paths))
         self.text_files = dict(zip(keys, text_paths))
-        self.pose_files = dict(zip(keys, pose_paths))
+        self.keypoints =  dict(zip(keys, np.squeeze(keypoints)))
+        #self.pose_files = dict(zip(keys, pose_paths))
         self.text_len = text_len
         self.truncate_captions = truncate_captions
         self.resize_ratio = resize_ratio
@@ -80,8 +94,8 @@ class PoseDataset(Dataset):
 
         text_file = self.text_files[key]
         image_file = self.image_files[key]
-        pose_file = self.pose_files[key]
-
+        #pose_file = self.pose_files[key]
+        kp = self.keypoints[key]
         descriptions = text_file.read_text().split('\n')
         descriptions = list(filter(lambda t: len(t) > 0, descriptions))
         try:
@@ -98,7 +112,15 @@ class PoseDataset(Dataset):
         ).squeeze(0)
         try:
             image_tensor = self.image_transform(PIL.Image.open(image_file))
-            pose_tensor = self.image_transform(PIL.Image.open(pose_file))
+            if self.pose_format == 'image':
+                pose_tensor = keypoints_to_image(kp)
+                pose_tensor = self.image_transform(PIL.Image.fromarray(pose_tensor))
+            elif self.pose_format == 'keypoint':
+                pose_tensor = rearrange(kp, 'a b c -> a (b c)')
+            elif self.pose_format == 'heatmap':
+                pose_tensor = keypoints_to_heatmap(kp, image_shape=(64,64), sigma=2.)
+            else:
+                raise(ValueError, f'f pose format of {self.pose_format}is undefined') 
         except (PIL.UnidentifiedImageError, OSError) as corrupt_image_exceptions:
             print(f"An exception occurred trying to load file {image_file}.")
             print(f"Skipping index {ind}")

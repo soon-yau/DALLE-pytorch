@@ -16,7 +16,7 @@ from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
 from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
-
+from dalle_pytorch.pose_utils import PoseVisualizer
 # libraries needed for webdataset support
 import webdataset as wds
 from torchvision import transforms as T
@@ -51,6 +51,11 @@ parser.add_argument('--data_file', type=str, required=False,
 parser.add_argument('--data_type', type=str, required=False, default='image_text',
                     help='image_text, mpii, pose')
 
+
+parser.add_argument('--pose_format', type=str, required=True, default='image',
+                    help='image, heatmap, keypoint')
+
+
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
                     help='cuda')
 
@@ -75,6 +80,10 @@ parser.add_argument('--hug', dest='hug', action='store_true')
 
 parser.add_argument('--bpe_path', type=str,
                     help='path to your BPE json file')
+
+parser.add_argument('--display_freq', type=int, default=500,
+                    help='frequency to display result')
+
 
 parser.add_argument('--dalle_output_file_name', type=str, default = "dalle",
                     help='output_file_name')
@@ -202,7 +211,9 @@ ROTARY_EMB = args.rotary_emb
 ATTN_TYPES = tuple(args.attn_types.split(','))
 DATA_TYPE = args.data_type
 DEEPSPEED_CP_AUX_FILENAME = 'auxiliary.pt'
+POSE_FORMAT = args.pose_format
 
+pose_visualizer = PoseVisualizer(POSE_FORMAT)
 if not ENABLE_WEBDATASET:
     # quit early if you used the wrong folder name
     assert Path(args.image_text_folder).exists(), f'The path {args.image_text_folder} was not found.'
@@ -297,6 +308,13 @@ else:
             vae = OpenAIDiscreteVAE()
 
     IMAGE_SIZE = vae.image_size
+    if POSE_FORMAT == 'heatmap':
+        NUM_POSE_TOKEN = 0
+        POSE_SEQ_LEN = 25
+    elif POSE_FORMAT == 'image':
+        NUM_POSE_TOKEN = 0
+        POSE_SEQ_LEN = 0  
+
     dalle_params = dict(
         num_text_tokens=tokenizer.vocab_size,
         text_seq_len=TEXT_SEQ_LEN,
@@ -312,7 +330,9 @@ else:
         stable=STABLE,
         shift_tokens=SHIFT_TOKENS,
         rotary_emb=ROTARY_EMB,
-        use_pose=True if DATA_TYPE=='pose'  else False
+        num_pose_token=NUM_POSE_TOKEN,
+        pose_seq_len=POSE_SEQ_LEN,
+        pose_format=POSE_FORMAT
     )
     resume_epoch = 0
 
@@ -404,6 +424,7 @@ else:
             truncate_captions=args.truncate_captions,
             tokenizer=tokenizer,
             shuffle=is_shuffle,
+            pose_format=POSE_FORMAT
         )
 
     else:
@@ -610,7 +631,7 @@ for epoch in range(resume_epoch, EPOCHS):
 
         text, images, poses = map(lambda t: t.to(CUDA), (text, images, poses))
 
-        loss = distr_dalle(text, images, poses, return_loss=True)
+        loss, loss_dict = distr_dalle(text, images, poses, return_loss=True)
 
         if using_deepspeed:
             distr_dalle.backward(loss)
@@ -623,25 +644,25 @@ for epoch in range(resume_epoch, EPOCHS):
             distr_opt.zero_grad()
 
         # Collective loss, averaged
-        avg_loss = distr_backend.average_all(loss)
-
+        loss_dict = distr_backend.average_all(loss_dict)
+        avg_loss = loss_dict['total_loss']
         log = {}
 
         if i % 10 == 0 and distr_backend.is_root_worker():
-            print(epoch, i, f'loss - {avg_loss.item()}')
+            print(epoch, i, f'loss - {avg_loss}')
 
             log = {
                 **log,
+                **loss_dict,
                 'epoch': epoch,
                 'iter': i,
-                'loss': avg_loss.item(),
                 'lr': distr_opt.param_groups[0]['lr']
             }
 
         if i % SAVE_EVERY_N_STEPS == 0:
             save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
-        if i % 500 == 0:
+        if i % args.display_freq == 0:
             if distr_backend.is_root_worker():
                 sample_text = text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
@@ -649,17 +670,21 @@ for epoch in range(resume_epoch, EPOCHS):
 
                 if not avoid_model_calls:
                     # CUDA index errors when we don't guard this
-                    image, pose = dalle.generate_images(text[:1], poses[:1], filter_thres=0.9)  # topk sampling at 0.9
-                    same_pose = torch.cat((pose, image), dim=-1)
-                    image, pose = dalle.generate_images(text[:1], poses[1:2], filter_thres=0.9)
-                    diff_pose = torch.cat((pose, image), dim=-1)
+                    input_pose = poses[:1]                    
+                    image, output_pose = dalle.generate_images(text[:1], input_pose, filter_thres=0.9)  # topk sampling at 0.9
+                    input_pose_image = pose_visualizer.convert(input_pose)
+                    if POSE_FORMAT == 'image':
+                        b = pose_visualizer.convert(output_pose)
+                        same_pose = torch.cat((input_pose_image, b, image), dim=-1)
+                    elif POSE_FORMAT == 'heatmap':
+                        same_pose = torch.cat((input_pose_image, image[0]), dim=-1)
 
                 log = {
                     **log,
                 }
                 if not avoid_model_calls:
-                    log['same_pose_image'] = wandb.Image(same_pose, caption=decoded_text)
-                    log['diff_pose_image'] = wandb.Image(diff_pose, caption=decoded_text)
+                    log['image'] = wandb.Image(same_pose, caption=decoded_text)
+                    #log['diff_pose_image'] = wandb.Image(diff_pose, caption=decoded_text)
 
         if i % 10 == 9 and distr_backend.is_root_worker():
             sample_per_sec = BATCH_SIZE * 10 / (time.time() - t)
