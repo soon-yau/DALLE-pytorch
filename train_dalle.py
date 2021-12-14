@@ -55,6 +55,8 @@ parser.add_argument('--data_type', type=str, required=False, default='image_text
 parser.add_argument('--pose_format', type=str, required=True, default='image',
                     help='image, heatmap, keypoint')
 
+parser.add_argument('--pose_dim', type=int, required=False, 
+                    help='dimension for pose. For keypoint use 3, for heatmap use heatmap size e.g. 64x64=4096')
 
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
                     help='cuda')
@@ -212,6 +214,7 @@ ATTN_TYPES = tuple(args.attn_types.split(','))
 DATA_TYPE = args.data_type
 DEEPSPEED_CP_AUX_FILENAME = 'auxiliary.pt'
 POSE_FORMAT = args.pose_format
+POSE_DIM = args.pose_dim
 
 pose_visualizer = PoseVisualizer(POSE_FORMAT)
 if not ENABLE_WEBDATASET:
@@ -308,7 +311,7 @@ else:
             vae = OpenAIDiscreteVAE()
 
     IMAGE_SIZE = vae.image_size
-    if POSE_FORMAT == 'heatmap':
+    if POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
         NUM_POSE_TOKEN = 0
         POSE_SEQ_LEN = 25
     elif POSE_FORMAT == 'image':
@@ -332,7 +335,8 @@ else:
         rotary_emb=ROTARY_EMB,
         num_pose_token=NUM_POSE_TOKEN,
         pose_seq_len=POSE_SEQ_LEN,
-        pose_format=POSE_FORMAT
+        pose_format=POSE_FORMAT,
+        pose_dim=POSE_DIM
     )
     resume_epoch = 0
 
@@ -676,7 +680,7 @@ for epoch in range(resume_epoch, EPOCHS):
                     if POSE_FORMAT == 'image':
                         b = pose_visualizer.convert(output_pose)
                         same_pose = torch.cat((input_pose_image, b, image), dim=-1)
-                    elif POSE_FORMAT == 'heatmap':
+                    elif POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
                         same_pose = torch.cat((input_pose_image, image[0]), dim=-1)
 
                 log = {

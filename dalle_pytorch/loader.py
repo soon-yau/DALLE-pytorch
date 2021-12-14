@@ -116,7 +116,7 @@ class PoseDataset(Dataset):
                 pose_tensor = keypoints_to_image(kp)
                 pose_tensor = self.image_transform(PIL.Image.fromarray(pose_tensor))
             elif self.pose_format == 'keypoint':
-                pose_tensor = rearrange(kp, 'a b c -> a (b c)')
+                pose_tensor = kp
             elif self.pose_format == 'heatmap':
                 pose_tensor = keypoints_to_heatmap(kp, image_shape=(64,64), sigma=2.)
             else:

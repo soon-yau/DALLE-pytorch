@@ -42,6 +42,8 @@ def keypoints_to_image(kp, # list of x,y,confidence
         kp2 = kp[kp2]
         if kp1[-1]>=threshold and kp2[-1]>=threshold:
             cv2.line(img, get_kp(kp1), get_kp(kp2), color, 2)
+
+    img = T.ToTensor()(img/255.).to(kp.device)
     return img
 
 
@@ -97,11 +99,10 @@ def heatmap_to_skeleton(heatmaps):
             keypoints.append(coords)
         else:
             keypoints.append([0 ,0, 0.])
-    skeleton = keypoints_to_image(keypoints, fraction=False)
-    skeleton_img = T.ToTensor()(skeleton/255.)
+    skeleton_img = keypoints_to_image(keypoints, fraction=False)
 
     #heatmap_img = heatmap_to_image(heatmaps)
-    #mix_img = 0.3*heatmap_img + 0.7*skeleton_img.to(heatmap_img.device)
+    #mix_img = 0.3*heatmap_img + 0.7*skeleton_img
     #return mix_img
     return skeleton_img.to(heatmaps.device)
 
