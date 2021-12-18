@@ -10,7 +10,102 @@ import pandas as pd
 from einops import rearrange
 import numpy as np
 
-from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap
+from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap, RotateScale, Crop, ToTensor
+
+class PoseDatasetPickle(Dataset):
+    def __init__(self,
+                 folder,
+                 pickle_file,
+                 text_len=256,
+                 image_size=128,
+                 truncate_captions=False,
+                 resize_ratio=0.75,
+                 tokenizer=None,
+                 shuffle=False,
+                 threshold=0.25,
+                 pose_format='image', # 'image' or 'keypoint' or 'heatmap'
+                 output_shape=(128, 128)
+                 ):
+        """
+        @param folder: Folder containing images and text files matched by their paths' respective "stem"
+        @param truncate_captions: Rather than throw an exception, captions which are too long will be truncated.
+        """
+        super().__init__()
+        self.pose_format = pose_format
+        self.shuffle = shuffle
+        df = pd.read_pickle(pickle_file)
+        self.df = df[df.pose_score > threshold]
+        self.root_dir = Path(folder)
+
+        self.text_len = text_len
+        self.truncate_captions = truncate_captions
+        self.resize_ratio = resize_ratio
+        self.tokenizer = tokenizer
+
+        self.image_keypoint_transform = T.Compose([
+            #RotateScale((-10,10),(1.0,1.1)),
+            #Crop((0.0, 0.15)),
+            ToTensor()
+        ])
+
+    def __len__(self):
+        return len(self.df)
+
+    def random_sample(self):
+        return self.__getitem__(randint(0, self.__len__() - 1))
+
+    def sequential_sample(self, ind):
+        if ind >= self.__len__() - 1:
+            return self.__getitem__(0)
+        return self.__getitem__(ind + 1)
+
+    def skip_sample(self, ind):
+        if self.shuffle:
+            return self.random_sample()
+        return self.sequential_sample(ind=ind)
+
+    def __getitem__(self, ind):
+        sample = self.df.iloc[ind]
+        image_file = self.root_dir / sample.image
+        descriptions = sample.text.copy()
+        # FIX ME, use multiperson
+        keypoints = np.squeeze(sample.keypoints.copy())
+
+        descriptions = list(filter(lambda t: len(t) > 0, descriptions))
+        try:
+            description = choice(descriptions)
+        except IndexError as zero_captions_in_file_ex:
+            print(f"An exception occurred trying to load file {text_file}.")
+            print(f"Skipping index {ind}")
+            return self.skip_sample(ind)
+
+        tokenized_text = self.tokenizer.tokenize(
+            description,
+            self.text_len,
+            truncate_text=self.truncate_captions
+        ).squeeze(0)
+        
+        try:
+            image = PIL.Image.open(image_file)
+            image = image.convert('RGB') if image.mode != 'RGB' else image
+
+            # augmentation, to do, multiple keypoints
+            augmented = self.image_keypoint_transform({'image':np.array(image), 'keypoints':keypoints})
+            image_tensor, keypoints = augmented['image'], augmented['keypoints']
+
+            if self.pose_format == 'keypoint':
+                pose_tensor = keypoints
+            else:
+                raise(ValueError, f'f pose format of {self.pose_format}is undefined')
+                
+        except (PIL.UnidentifiedImageError, OSError) as corrupt_image_exceptions:
+            print(f"An exception occurred trying to load file {image_file}.")
+            print(f"Skipping index {ind}")
+            return self.skip_sample(ind)
+
+        # Success
+
+        return tokenized_text, image_tensor, pose_tensor
 
 class PoseDataset(Dataset):
     def __init__(self,
@@ -63,7 +158,7 @@ class PoseDataset(Dataset):
         self.truncate_captions = truncate_captions
         self.resize_ratio = resize_ratio
         self.tokenizer = tokenizer
-        # fix me
+
         self.image_transform = T.Compose([
             T.Lambda(lambda img: img.convert('RGB')
             if img.mode != 'RGB' else img),
@@ -71,6 +166,12 @@ class PoseDataset(Dataset):
             #                    scale=(self.resize_ratio, 1.),
             #                    ratio=(1., 1.)),
             T.ToTensor()
+        ])
+
+        self.image_keypoint_transform = T.Compose([
+            #RotateScale((-10,10),(1.0,1.1)),
+            Crop((0.0, 0.15)),
+            ToTensor()
         ])
 
     def __len__(self):
@@ -111,8 +212,15 @@ class PoseDataset(Dataset):
             truncate_text=self.truncate_captions
         ).squeeze(0)
         try:
-            image_tensor = self.image_transform(PIL.Image.open(image_file))
+            image = PIL.Image.open(image_file)
+            image = image.convert('RGB') if image.mode != 'RGB' else image
+
+            # augmentation
+            augmented = self.image_keypoint_transform({'image':np.array(image), 'keypoints':kp})
+            image_tensor, kp = augmented['image'], augmented['keypoints']
+
             if self.pose_format == 'image':
+                # fix me
                 pose_tensor = keypoints_to_image(kp)
                 pose_tensor = self.image_transform(PIL.Image.fromarray(pose_tensor))
             elif self.pose_format == 'keypoint':

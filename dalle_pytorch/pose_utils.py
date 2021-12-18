@@ -3,6 +3,8 @@ import math
 import numpy as np
 import torch
 from torchvision import transforms as T
+from copy import deepcopy
+import torch
 
 def keypoints_to_image(kp, # list of x,y,confidence
                        threshold= 0.2, 
@@ -120,3 +122,83 @@ class PoseVisualizer:
 
     def convert(self, x):
         return self.fn(x)
+
+
+class RotateScale(object):
+    def __init__(self, angle_degree=(0., 0.), scale=(1,1)):
+        self.angle_degree = angle_degree
+        self.scale = scale
+    
+    def __call__(self, sample):
+        image, keypoints = sample['image'], sample['keypoints']
+        # get random degree and scale
+        angle = np.random.uniform(self.angle_degree[0], self.angle_degree[1])
+        scale = np.random.uniform(self.scale[0], self.scale[1])
+        # rotate image
+        height, width = image.shape[:2]
+        center = (width/2, height/2)
+        rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=angle, scale=scale)
+        rotated_image = cv2.warpAffine(src=image, M=rotate_matrix, dsize=(width, height))
+        # rotate keypoint
+        
+        kp_ = deepcopy(keypoints)
+        kp_[:,2] = 1.
+        center = (0.5, 0.5)
+        rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=angle, scale=scale)
+        
+        new_kp = np.dot(kp_, rotate_matrix.transpose())
+        new_kp = np.concatenate((new_kp, np.expand_dims(keypoints[:,2].transpose(), 1)), axis=1)
+        
+        return {'image':rotated_image, 'keypoints':new_kp.astype(np.float32)}
+
+class Crop(object):
+    
+    def __init__(self, margins=(0.05, 1.)):
+        self.margin = margins
+        
+    def __call__(self, sample):
+        image, keypoints = sample['image'], sample['keypoints']
+        kps = keypoints.copy()
+        height, width = image.shape[:2]
+        
+        left_x, top_y, right_x = np.random.uniform(self.margin[0], self.margin[1], size=3)
+        right_x = 1 - right_x
+        
+        crop_h = crop_w = right_x - left_x
+        if top_y + crop_h > 1:
+            crop_h = crop_w = 1 - top_y
+
+        right_x = left_x + crop_w
+        bottom_y = top_y + crop_h
+
+        # crop keypoints
+        kps[:,0] = (kps[:,0] - left_x)/crop_w
+        kps[:,1] = (kps[:,1] - top_y)/crop_h
+
+        x_indices = np.where(np.logical_and(kps[:,0]<0, kps[:,0]>1.))[0]
+        y_indices = np.where(np.logical_and(kps[:,1]<0, kps[:,1]>1.))[0]
+        kps[list(set(y_indices) | set(x_indices))] = [0., 0., 0.]
+        
+        # crop images
+        left_x = int(left_x * width)
+        top_y = int(top_y * height)
+        right_x = left_x + int(width*crop_w)
+        bottom_y = top_y + int(height*crop_h)
+        crop_image = image[top_y:bottom_y, 
+                           left_x:right_x, :]
+        crop_image = cv2.resize(crop_image, (width, height), interpolation=cv2.INTER_AREA)
+
+        return {'image':crop_image, 'keypoints':kps}
+
+class ToTensor(object):
+    """Convert ndarrays in sample to Tensors."""
+
+    def __call__(self, sample):
+        # swap color axis because
+        # numpy image: H x W x C
+        # torch image: C x H x W
+        image, keypoints = sample['image'], sample['keypoints']
+        image = image.transpose((2, 0, 1))
+        image = image.astype(np.float32)/255.
+        return {'image':torch.from_numpy(image), \
+                'keypoints': torch.from_numpy(keypoints)}

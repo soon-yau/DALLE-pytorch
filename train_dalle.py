@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset
+from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset, PoseDatasetPickle
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
 from dalle_pytorch.pose_utils import PoseVisualizer
 # libraries needed for webdataset support
@@ -419,7 +419,8 @@ else:
             shuffle=is_shuffle,
         )
     elif DATA_TYPE == 'pose':
-        ds = PoseDataset(
+        #ds = PoseDataset(
+        ds = PoseDatasetPickle(
             args.image_text_folder,
             args.data_file,
             text_len=TEXT_SEQ_LEN,
@@ -681,7 +682,7 @@ for epoch in range(resume_epoch, EPOCHS):
                         b = pose_visualizer.convert(output_pose)
                         same_pose = torch.cat((input_pose_image, b, image), dim=-1)
                     elif POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
-                        same_pose = torch.cat((input_pose_image, image[0]), dim=-1)
+                        same_pose = torch.cat((input_pose_image, image[0], images[0]), dim=-1)
 
                 log = {
                     **log,
