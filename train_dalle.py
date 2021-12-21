@@ -58,6 +58,8 @@ parser.add_argument('--pose_format', type=str, required=True, default='image',
 parser.add_argument('--pose_dim', type=int, required=False, 
                     help='dimension for pose. For keypoint use 3, for heatmap use heatmap size e.g. 64x64=4096')
 
+parser.add_argument('--merge_images', dest='merge_images', action='store_true')
+
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
                     help='cuda')
 
@@ -215,6 +217,7 @@ DATA_TYPE = args.data_type
 DEEPSPEED_CP_AUX_FILENAME = 'auxiliary.pt'
 POSE_FORMAT = args.pose_format
 POSE_DIM = args.pose_dim
+MERGE_IMAGES = args.merge_images
 
 pose_visualizer = PoseVisualizer(POSE_FORMAT)
 if not ENABLE_WEBDATASET:
@@ -429,7 +432,8 @@ else:
             truncate_captions=args.truncate_captions,
             tokenizer=tokenizer,
             shuffle=is_shuffle,
-            pose_format=POSE_FORMAT
+            pose_format=POSE_FORMAT,
+            merge_images=MERGE_IMAGES
         )
 
     else:

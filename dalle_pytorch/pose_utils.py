@@ -6,7 +6,7 @@ from torchvision import transforms as T
 from copy import deepcopy
 import torch
 
-def keypoints_to_image(kp, # list of x,y,confidence
+def keypoints_to_image(keypoints, # list of x,y,confidence
                        threshold= 0.2, 
                        fraction=True, 
                        image_shape=(256, 256)):
@@ -39,13 +39,14 @@ def keypoints_to_image(kp, # list of x,y,confidence
         return coords
     height, width = image_shape[:2]
     img = np.zeros((height, width, 3), np.uint8)
-    for kp1, kp2, color in segments:
-        kp1 = kp[kp1]
-        kp2 = kp[kp2]
-        if kp1[-1]>=threshold and kp2[-1]>=threshold:
-            cv2.line(img, get_kp(kp1), get_kp(kp2), color, 2)
+    for person in keypoints:
+        for kp1, kp2, color in segments:
+            kp1 = person[kp1]
+            kp2 = person[kp2]
+            if kp1[-1]>=threshold and kp2[-1]>=threshold:
+                cv2.line(img, get_kp(kp1), get_kp(kp2), color, 2)
 
-    img = T.ToTensor()(img/255.).to(kp.device)
+    img = T.ToTensor()(img/255.).to(keypoints.device)
     return img
 
 
@@ -202,3 +203,17 @@ class ToTensor(object):
         image = image.astype(np.float32)/255.
         return {'image':torch.from_numpy(image), \
                 'keypoints': torch.from_numpy(keypoints)}
+
+class ConcatSamples(object):    
+    def __call__(self, sample):
+        images, keypoints = sample['image'], sample['keypoints']
+        kps = keypoints.copy()
+        h, w, _ = images[0].shape
+        left_half = images[0][:,int(0.25*h):int(0.75*h),:]
+        right_half = images[1][:,int(0.25*h):int(0.75*h),:]
+        combined_image = np.hstack((left_half, right_half))
+
+        kps[0] = [[max(x-0.25, 0), y, c] for x, y, c in kps[0]]
+        kps[1] = [[min(x+0.25, 1), y, c] for x, y, c in kps[1]]
+
+        return {'image':combined_image, 'keypoints':kps}

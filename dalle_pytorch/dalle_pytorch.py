@@ -568,7 +568,6 @@ class DALLE(nn.Module):
     ):
         assert text.shape[-1] == self.text_seq_len, f'the length {text.shape[-1]} of the text tokens you passed in does not have the correct length ({self.text_seq_len})'
         device, total_seq_len = text.device, self.total_seq_len
-
         # make sure padding in text tokens get unique padding token id
 
         text_range = torch.arange(self.text_seq_len, device = device) + (self.num_text_tokens - self.text_seq_len)
@@ -609,9 +608,11 @@ class DALLE(nn.Module):
                 tokens = torch.cat((tokens, pose_emb), dim = 1)
             elif self.pose_format == 'heatmap' or self.pose_format == 'keypoint':
                 # FIX ME add positional embedding
-                pose_len = pose.shape[1]
+                pose_len = pose.shape[2]
                 if self.pose_format == 'heatmap':
                     pose = rearrange(pose, 'b c h w -> b c (h w)')
+                elif len(pose.shape)==4: # multiperson
+                    pose = rearrange(pose, 'b n_person n_kp c -> b n_kp (n_person c)')                    
                 pose_emb = self.pose_encoder(pose)
                 #pose_pos = self.pose_pos_emb(torch.arange(25, device = tokens.device))
                 #pose_emb += pose_pos

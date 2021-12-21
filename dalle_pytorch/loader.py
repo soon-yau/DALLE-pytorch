@@ -1,5 +1,5 @@
 from pathlib import Path
-from random import randint, choice
+from random import randint, choice, uniform
 
 import PIL
 
@@ -10,7 +10,7 @@ import pandas as pd
 from einops import rearrange
 import numpy as np
 
-from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap, RotateScale, Crop, ToTensor
+from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap, RotateScale, Crop, ToTensor, ConcatSamples
 
 class PoseDatasetPickle(Dataset):
     def __init__(self,
@@ -24,13 +24,15 @@ class PoseDatasetPickle(Dataset):
                  shuffle=False,
                  threshold=0.25,
                  pose_format='image', # 'image' or 'keypoint' or 'heatmap'
-                 output_shape=(128, 128)
+                 output_shape=(128, 128),
+                 merge_images=False
                  ):
         """
         @param folder: Folder containing images and text files matched by their paths' respective "stem"
         @param truncate_captions: Rather than throw an exception, captions which are too long will be truncated.
         """
         super().__init__()
+        self.merge_images = merge_images
         self.pose_format = pose_format
         self.shuffle = shuffle
         df = pd.read_pickle(pickle_file)
@@ -41,7 +43,7 @@ class PoseDatasetPickle(Dataset):
         self.truncate_captions = truncate_captions
         self.resize_ratio = resize_ratio
         self.tokenizer = tokenizer
-
+        self.concat = ConcatSamples()
         self.image_keypoint_transform = T.Compose([
             #RotateScale((-10,10),(1.0,1.1)),
             #Crop((0.0, 0.15)),
@@ -68,9 +70,7 @@ class PoseDatasetPickle(Dataset):
         sample = self.df.iloc[ind]
         image_file = self.root_dir / sample.image
         descriptions = sample.text.copy()
-        # FIX ME, use multiperson
-        keypoints = np.squeeze(sample.keypoints.copy())
-
+        keypoints = sample.keypoints.copy()
         descriptions = list(filter(lambda t: len(t) > 0, descriptions))
         try:
             description = choice(descriptions)
@@ -78,6 +78,28 @@ class PoseDatasetPickle(Dataset):
             print(f"An exception occurred trying to load file {text_file}.")
             print(f"Skipping index {ind}")
             return self.skip_sample(ind)
+        image = PIL.Image.open(image_file)
+        image = image.convert('RGB') if image.mode != 'RGB' else image
+        image = np.array(image)
+
+
+        if self.merge_images:
+            ind = randint(0, self.__len__() - 1)
+            sample = self.df.iloc[ind]
+            image_file = self.root_dir / sample.image
+            descriptions_2 = list(sample.text.copy())
+            description_2 = choice(descriptions_2)
+            keypoints_2 = sample.keypoints.copy()
+            image_2 = PIL.Image.open(image_file)
+            image_2 = image_2.convert('RGB') if image_2.mode != 'RGB' else image_2
+            image_2 = np.array(image_2)
+
+            two_images = np.vstack((np.expand_dims(image, 0), 
+                                    np.expand_dims(image_2, 0)))
+            two_keypoints = np.vstack((keypoints, keypoints_2))
+            merged = self.concat({'image':two_images, 'keypoints':two_keypoints})
+            image, keypoints = merged['image'], merged['keypoints']
+            description = description + '. ' +  description_2
 
         tokenized_text = self.tokenizer.tokenize(
             description,
@@ -86,11 +108,8 @@ class PoseDatasetPickle(Dataset):
         ).squeeze(0)
         
         try:
-            image = PIL.Image.open(image_file)
-            image = image.convert('RGB') if image.mode != 'RGB' else image
-
             # augmentation, to do, multiple keypoints
-            augmented = self.image_keypoint_transform({'image':np.array(image), 'keypoints':keypoints})
+            augmented = self.image_keypoint_transform({'image':image, 'keypoints':keypoints})
             image_tensor, keypoints = augmented['image'], augmented['keypoints']
 
             if self.pose_format == 'keypoint':
