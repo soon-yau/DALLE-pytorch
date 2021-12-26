@@ -58,6 +58,7 @@ parser.add_argument('--pose_format', type=str, required=True, default='image',
 parser.add_argument('--pose_dim', type=int, required=False, 
                     help='dimension for pose. For keypoint use 3, for heatmap use heatmap size e.g. 64x64=4096')
 
+parser.add_argument('--pose_seq_len', type=int, required=False, default=0)
 parser.add_argument('--merge_images', dest='merge_images', action='store_true')
 
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
@@ -218,6 +219,7 @@ DEEPSPEED_CP_AUX_FILENAME = 'auxiliary.pt'
 POSE_FORMAT = args.pose_format
 POSE_DIM = args.pose_dim
 MERGE_IMAGES = args.merge_images
+POSE_SEQ_LEN = args.pose_seq_len
 
 pose_visualizer = PoseVisualizer(POSE_FORMAT)
 if not ENABLE_WEBDATASET:
@@ -314,13 +316,15 @@ else:
             vae = OpenAIDiscreteVAE()
 
     IMAGE_SIZE = vae.image_size
+    NUM_POSE_TOKEN = 0
+    '''
     if POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
         NUM_POSE_TOKEN = 0
-        POSE_SEQ_LEN = 25
+        POSE_SEQ_LEN = 33 #FIX ME!
     elif POSE_FORMAT == 'image':
         NUM_POSE_TOKEN = 0
         POSE_SEQ_LEN = 0  
-
+    '''
     dalle_params = dict(
         num_text_tokens=tokenizer.vocab_size,
         text_seq_len=TEXT_SEQ_LEN,
@@ -433,7 +437,8 @@ else:
             tokenizer=tokenizer,
             shuffle=is_shuffle,
             pose_format=POSE_FORMAT,
-            merge_images=MERGE_IMAGES
+            merge_images=MERGE_IMAGES,
+            threshold=0.5
         )
 
     else:
@@ -497,10 +502,10 @@ if LR_DECAY:
         opt,
         mode="min",
         factor=0.5,
-        patience=0,
+        patience=1,
         cooldown=0,
         min_lr=1e-6,
-        threshold = 0.1,
+        threshold = 0.5,
         verbose=True,
     )
     if RESUME and scheduler_state:
@@ -710,14 +715,14 @@ for epoch in range(resume_epoch, EPOCHS):
         distr_scheduler.step(avg_loss)
 
     save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
-    
+    '''
     if distr_backend.is_root_worker():
         # save trained model to wandb as an artifact every epoch's end
 
         model_artifact = wandb.Artifact('trained-dalle', type='model', metadata=dict(model_config))
         model_artifact.add_file(DALLE_OUTPUT_FILE_NAME)
         run.log_artifact(model_artifact)
-
+    '''
 save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 if distr_backend.is_root_worker():
     wandb.save(DALLE_OUTPUT_FILE_NAME)

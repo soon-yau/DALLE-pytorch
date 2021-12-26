@@ -10,7 +10,7 @@ import pandas as pd
 from einops import rearrange
 import numpy as np
 
-from dalle_pytorch.pose_utils import keypoints_to_image, keypoints_to_heatmap, RotateScale, Crop, ToTensor, ConcatSamples
+from dalle_pytorch.pose_utils import keypoints_to_heatmap, RotateScale, Crop, ToTensor, ConcatSamples
 
 class PoseDatasetPickle(Dataset):
     def __init__(self,
@@ -35,8 +35,8 @@ class PoseDatasetPickle(Dataset):
         self.merge_images = merge_images
         self.pose_format = pose_format
         self.shuffle = shuffle
-        df = pd.read_pickle(pickle_file)
-        self.df = df[df.pose_score > threshold]
+        self.df = pd.read_pickle(pickle_file)
+        #self.df = df[df.pose_score > threshold]
         self.root_dir = Path(folder)
 
         self.text_len = text_len
@@ -148,7 +148,7 @@ class PoseDataset(Dataset):
         self.pose_format = pose_format
         self.shuffle = shuffle
         df = pd.read_pickle(pickle_file)
-        df = df[df.pose_score > threshold]
+        #df = df[df.pose_score > threshold]
         
         # normalize keypoints to [0, 1] and flatten to (75,)
         keypoints = list(df.keypoints)

@@ -5,7 +5,78 @@ import torch
 from torchvision import transforms as T
 from copy import deepcopy
 import torch
+from itertools import cycle
 
+class Keypoints2Image:
+    def __init__(self, mode='openpose_body_25', image_shape=(256, 256)):
+
+        self.height = image_shape[0]
+        self.width = image_shape[1]
+        
+        bgr_colors =cycle([(255,0,0), 
+            (255,165,0),
+            (218,165,32),
+            (255,255,0),
+            (0,255,0),
+            (144,238,133),
+            (144,238,133),
+            (255,0,0),
+            (124,252,0),
+            (144,238,144),
+            (135,206,235),
+            (30,144,255),
+            (128,0,128),
+            (128,0,128),
+            (255,0,255),
+            (255,0,255),
+            (75,0,130),
+            (75,0,130),])        
+        
+        if mode == 'openpose_body_25':
+            edges = [(0,1), (1,2), (2,3), (3,4), (1,5), (5,6), \
+                      (6,7), (1,8), (8,9,), (9,10), (10,11), (8,12), (12,13), \
+                      (13,14), (0, 15), (15, 17), (0,16), (16,18)]
+            self.segments = [(edge, next(bgr_colors)) for edge in edges]
+            
+        elif mode == 'mediapipe':
+            edges = [(8,6), (6,5), (5,4), (4,0), (0,1), (1,2), (2,3), (3,7), (9,10), \
+                     (18,20), (16,18), (16,20), (16,22), (14,22), (12,14), (11,12), \
+                     (11,13), (13,15), (15,21), (15,17), (17,19), (15,19), (12,24), \
+                     (23,24), (11,23), (23,25), (25,27), (27,29), (27,31), (29,31), \
+                     (24,26), (26,28), (28,32), (28,30), \
+                     (30,32),  ]
+            self.segments = []
+            count = 0
+            for edge in edges:
+                if count % 2 == 0:
+                    color = next(bgr_colors)
+                count += 1
+                self.segments.append((edge, color))
+        else:
+            raise ValueError(f"Invalid mode f{mode}")
+            
+            
+    def _get_coords(self, keypoint):
+        x = int(keypoint[0] * self.width)
+        y = int(keypoint[1] * self.height)
+        return tuple((x, y))
+    
+    def __call__(self, keypoints, threshold = 0.0):
+        
+        img = np.zeros((self.height, self.width, 3), np.uint8)
+        for person in keypoints:
+            for points, color in self.segments:
+                kp1 = person[points[0]]
+                kp2 = person[points[1]]
+                if kp1[-1] > threshold and kp2[-1] > threshold:
+                    cv2.line(img, self._get_coords(kp1), 
+                             self._get_coords(kp2), color, 2)
+
+        img =img/255.
+        if type(keypoints) == torch.Tensor:
+            img = T.ToTensor()(img).to(keypoints.device)
+        return img
+'''        
 def keypoints_to_image(keypoints, # list of x,y,confidence
                        threshold= 0.2, 
                        fraction=True, 
@@ -48,7 +119,7 @@ def keypoints_to_image(keypoints, # list of x,y,confidence
 
     img = T.ToTensor()(img/255.).to(keypoints.device)
     return img
-
+'''
 
 
 def keypoints_to_heatmap(keypoints,
@@ -117,7 +188,8 @@ class PoseVisualizer:
         elif self.pose_format == 'heatmap':
             self.fn = lambda x: heatmap_to_skeleton(x[0])
         elif self.pose_format == 'keypoint':
-            self.fn = lambda x : keypoints_to_image(x[0])
+            kp2im = Keypoints2Image('openpose_body_25')
+            self.fn = lambda x : kp2im(x[0])
         else:
             raise(ValueError)
 
