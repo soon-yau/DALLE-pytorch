@@ -76,51 +76,6 @@ class Keypoints2Image:
         if type(keypoints) == torch.Tensor:
             img = T.ToTensor()(img).to(keypoints.device)
         return img
-'''        
-def keypoints_to_image(keypoints, # list of x,y,confidence
-                       threshold= 0.2, 
-                       fraction=True, 
-                       image_shape=(256, 256)):
-    segments = [
-                [0,1,(255,0,0)], 
-                [1,2,(255,165,0)],
-                [2,3,(218,165,32)],
-                [3,4,(255,255,0)],
-                [1,5, (0,255,0)],
-                [5,6,(144,238,133)],
-                [6,7,(144,238,133)],
-                [1,8,(255,0,0)],
-                [8,9,(124,252,0)],
-                [9,10,(144,238,144)],
-                [10,11,(135,206,235)],
-                [8,12,(30,144,255)],
-                [12,13,(128,0,128)],
-                [13,14,(128,0,128)],
-                [0, 15, (255,0,255)],
-                [15, 17, (255,0,255)],
-                [0, 16, (75,0,130)],
-                [16, 18, (75,0,130),]
-    ]
-    def get_kp(kp):
-        x, y = kp[0:2]
-        if fraction:
-            x = x * width
-            y = y * height
-        coords = tuple((int(x), int(y)))
-        return coords
-    height, width = image_shape[:2]
-    img = np.zeros((height, width, 3), np.uint8)
-    for person in keypoints:
-        for kp1, kp2, color in segments:
-            kp1 = person[kp1]
-            kp2 = person[kp2]
-            if kp1[-1]>=threshold and kp2[-1]>=threshold:
-                cv2.line(img, get_kp(kp1), get_kp(kp2), color, 2)
-
-    img = T.ToTensor()(img/255.).to(keypoints.device)
-    return img
-'''
-
 
 def keypoints_to_heatmap(keypoints,
                          threshold = 0.2, 
@@ -289,3 +244,56 @@ class ConcatSamples(object):
         kps[1] = [[min(x+0.25, 1), y, c] for x, y, c in kps[1]]
 
         return {'image':combined_image, 'keypoints':kps}
+
+class CenterCropResize(object):
+    
+    def __init__(self, image_shape=(256, 256)):
+        self.image_shape = image_shape
+        
+    def __call__(self, sample):
+        image, keypoints = sample['image'], sample['keypoints']
+        kps = np.array(keypoints.copy())
+        
+        height, width = image.shape[:2]
+        new_height, new_width = height, width
+        if width > height:
+            left_margin = (width - height)/2/width
+            right_margin = 1 - left_margin
+            top_margin = 0.
+            bottom_margin = 1.
+            new_width = height
+        elif height > width:
+            left_margin = 0.
+            right_margin = 1.
+            top_margin = (height - width)/2/height
+            bottom_margin = 1 - top_margin
+            new_height = width
+            
+        # crop keypoints
+        crop_w = new_width/width
+        crop_h = new_height/height
+        kps[:,:,0] = (kps[:,:,0] - left_margin)/crop_w
+        kps[:,:,1] = (kps[:,:,1] - top_margin)/crop_h
+        x_indices = np.where(np.logical_and(kps[:,:,0]<0, kps[:,:,0]>1.))[0]
+        y_indices = np.where(np.logical_and(kps[:,:,1]<0, kps[:,:,1]>1.))[0]
+        kps[:,list(set(y_indices) | set(x_indices))] = [0., 0., 0.]
+        
+        # crop images
+        left_x = int(left_margin*width)
+        top_y = int(top_margin*height)
+        right_x = int(right_margin*width)
+        bottom_y = int(bottom_margin*height)
+        crop_image = image[top_y:bottom_y, 
+                           left_x:right_x, :]
+        crop_image = cv2.resize(crop_image, self.image_shape, interpolation=cv2.INTER_AREA)
+
+        return {'image':crop_image, 'keypoints':kps}
+
+
+def pad_keypoints(keypoints, max_num, num_keypoints=25):
+    padded = np.zeros((max_num, num_keypoints, 3), dtype=np.float32)
+    for i, keypoint in enumerate(keypoints):
+        if i >= max_num:
+            break
+        padded[i] = keypoint.astype(np.float32)
+    return padded

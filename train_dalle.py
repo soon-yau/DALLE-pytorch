@@ -502,10 +502,10 @@ if LR_DECAY:
         opt,
         mode="min",
         factor=0.5,
-        patience=1,
+        patience=0,
         cooldown=0,
         min_lr=1e-6,
-        threshold = 0.5,
+        threshold = 0.1,
         verbose=True,
     )
     if RESUME and scheduler_state:
@@ -662,7 +662,7 @@ for epoch in range(resume_epoch, EPOCHS):
         avg_loss = loss_dict['total_loss']
         log = {}
 
-        if i % 10 == 0 and distr_backend.is_root_worker():
+        if i % 100 == 0 and distr_backend.is_root_worker():
             print(epoch, i, f'loss - {avg_loss}')
 
             log = {
@@ -673,8 +673,8 @@ for epoch in range(resume_epoch, EPOCHS):
                 'lr': distr_opt.param_groups[0]['lr']
             }
 
-        if i % SAVE_EVERY_N_STEPS == 0:
-            save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
+        #if i % SAVE_EVERY_N_STEPS == 0:
+        #    save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 	
         if i % args.display_freq == 0:
             if distr_backend.is_root_worker():
@@ -700,8 +700,8 @@ for epoch in range(resume_epoch, EPOCHS):
                     log['image'] = wandb.Image(same_pose, caption=decoded_text)
                     #log['diff_pose_image'] = wandb.Image(diff_pose, caption=decoded_text)
 
-        if i % 10 == 9 and distr_backend.is_root_worker():
-            sample_per_sec = BATCH_SIZE * 10 / (time.time() - t)
+        if i % 1000 == 9 and distr_backend.is_root_worker():
+            sample_per_sec = BATCH_SIZE * 1000 / (time.time() - t)
             log["sample_per_sec"] = sample_per_sec
             print(epoch, i, f'sample_per_sec - {sample_per_sec}')
 

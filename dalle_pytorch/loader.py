@@ -11,6 +11,7 @@ from einops import rearrange
 import numpy as np
 
 from dalle_pytorch.pose_utils import keypoints_to_heatmap, RotateScale, Crop, ToTensor, ConcatSamples
+from dalle_pytorch.pose_utils import CenterCropResize, pad_keypoints
 
 class PoseDatasetPickle(Dataset):
     def __init__(self,
@@ -45,6 +46,7 @@ class PoseDatasetPickle(Dataset):
         self.tokenizer = tokenizer
         self.concat = ConcatSamples()
         self.image_keypoint_transform = T.Compose([
+            #CenterCropResize(),
             #RotateScale((-10,10),(1.0,1.1)),
             #Crop((0.0, 0.15)),
             ToTensor()
@@ -109,7 +111,9 @@ class PoseDatasetPickle(Dataset):
         
         try:
             # augmentation, to do, multiple keypoints
-            augmented = self.image_keypoint_transform({'image':image, 'keypoints':keypoints})
+            padded_keypoints = pad_keypoints(keypoints, 4)
+            #padded_keypoints = keypoints
+            augmented = self.image_keypoint_transform({'image':image, 'keypoints':padded_keypoints})
             image_tensor, keypoints = augmented['image'], augmented['keypoints']
 
             if self.pose_format == 'keypoint':

@@ -340,7 +340,8 @@ class DALLE(nn.Module):
         num_image_tokens = vae.num_tokens
         image_fmap_size = (vae.image_size // (2 ** vae.num_layers))
         image_seq_len = image_fmap_size ** 2
-
+        # FIX ME
+        #image_seq_len = 256
         num_text_tokens = num_text_tokens + text_seq_len  # reserve unique padding tokens for each position (text seq len)
 
         self.text_emb = nn.Embedding(num_text_tokens, dim)
@@ -365,7 +366,6 @@ class DALLE(nn.Module):
         total_tokens = num_text_tokens + num_image_tokens
         self.total_tokens = total_tokens
         self.total_seq_len = seq_len
-
         self.vae = vae
         self.pose_encoder = nn.Linear(pose_dim, dim) 
         set_requires_grad(self.vae, False) # freeze VAE from being trained
@@ -530,7 +530,6 @@ class DALLE(nn.Module):
                                 out[:, pose_offset:]
             '''
             image = out[:, pose_offset:]
-
             logits = self(text_seq, image, pose_seq, mask = mask)[:, -1, :]
 
             filtered_logits = top_k(logits, thres = filter_thres)
@@ -621,7 +620,6 @@ class DALLE(nn.Module):
                 raise(ValueError, f"Invalid pose format f{self.pose_format}")
             seq_len += pose_len
 
-
         if exists(image) and not is_empty(image):
             is_raw_image = len(image.shape) == 4
 
@@ -651,7 +649,6 @@ class DALLE(nn.Module):
         if self.stable:
             alpha = 0.1
             tokens = tokens * alpha + tokens.detach() * (1 - alpha)
-
         out = self.transformer(tokens)
 
         if self.stable:
@@ -681,16 +678,17 @@ class DALLE(nn.Module):
 
         logits = rearrange(logits, 'b n c -> b c n')
         pose_offset = self.text_seq_len + self.pose_seq_len
+
         loss_text = F.cross_entropy(logits[:, :, :self.text_seq_len], text[:, 1:])
         loss_img = F.cross_entropy(logits[:, :, pose_offset:], offsetted_image)
-
         if self.pose_format == 'image':
             loss_pose = F.cross_entropy(logits[:, :, self.text_seq_len:pose_offset], offsetted_pose)
         elif self.pose_format == 'heatmap' or self.pose_format == 'keypoint':
             loss_pose = F.mse_loss(out[:, self.text_seq_len:pose_offset,:], offsetted_pose)
 
-        loss = (loss_text + loss_pose + self.loss_img_weight * loss_img) / (self.loss_img_weight + 1)
+        pose_weight = 10.
+        loss = (loss_text + pose_weight*loss_pose + self.loss_img_weight * loss_img) / (self.loss_img_weight + 1)
         return loss, {'total_loss':loss.item(),
                 'text_loss':loss_text.item(),
                 'image_loss':(self.loss_img_weight*loss_img).item(),
-                'pose_loss':loss_pose.item()}
+                'pose_loss':(pose_weight*loss_pose).item()}
