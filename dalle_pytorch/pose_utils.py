@@ -74,7 +74,7 @@ class Keypoints2Image:
 
         img =img/255.
         if type(keypoints) == torch.Tensor:
-            img = T.ToTensor()(img).to(keypoints.device)
+            img = T.ToTensor()(img.astype(np.float32)).to(keypoints.device)
         return img
 
 def keypoints_to_heatmap(keypoints,
@@ -144,7 +144,7 @@ class PoseVisualizer:
             self.fn = lambda x: heatmap_to_skeleton(x[0])
         elif self.pose_format == 'keypoint':
             kp2im = Keypoints2Image('openpose_body_25')
-            self.fn = lambda x : kp2im(x[0])
+            self.fn = lambda x : kp2im(x)
         else:
             raise(ValueError)
 

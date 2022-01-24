@@ -1,3 +1,4 @@
+from importlib import import_module
 from math import log2, sqrt
 import torch
 from torch import nn, einsum
@@ -10,6 +11,7 @@ from einops import rearrange
 from dalle_pytorch import distributed_utils
 from dalle_pytorch.vae import OpenAIDiscreteVAE, VQGanVAE
 from dalle_pytorch.transformer import Transformer, DivideMax
+
 
 # helpers
 
@@ -336,12 +338,13 @@ class DALLE(nn.Module):
         super().__init__()
         assert isinstance(vae, (DiscreteVAE, OpenAIDiscreteVAE, VQGanVAE)), 'vae must be an instance of DiscreteVAE'
         self.pose_format = pose_format
+
         image_size = vae.image_size
         num_image_tokens = vae.num_tokens
         image_fmap_size = (vae.image_size // (2 ** vae.num_layers))
         image_seq_len = image_fmap_size ** 2
         # FIX ME
-        #image_seq_len = 256
+        image_seq_len = 256
         num_text_tokens = num_text_tokens + text_seq_len  # reserve unique padding tokens for each position (text seq len)
 
         self.text_emb = nn.Embedding(num_text_tokens, dim)
@@ -611,7 +614,7 @@ class DALLE(nn.Module):
                 if self.pose_format == 'heatmap':
                     pose = rearrange(pose, 'b c h w -> b c (h w)')
                 elif len(pose.shape)==4: # multiperson
-                    pose = rearrange(pose, 'b n_person n_kp c -> b n_kp (n_person c)')                    
+                    pose = rearrange(pose, 'b n_person n_kp c -> b n_kp (n_person c)')
                 pose_emb = self.pose_encoder(pose)
                 #pose_pos = self.pose_pos_emb(torch.arange(25, device = tokens.device))
                 #pose_emb += pose_pos

@@ -13,6 +13,8 @@ import numpy as np
 from dalle_pytorch.pose_utils import keypoints_to_heatmap, RotateScale, Crop, ToTensor, ConcatSamples
 from dalle_pytorch.pose_utils import CenterCropResize, pad_keypoints
 
+from dalle_pytorch.pose_utils import PoseVisualizer
+
 class PoseDatasetPickle(Dataset):
     def __init__(self,
                  folder,
@@ -26,20 +28,22 @@ class PoseDatasetPickle(Dataset):
                  threshold=0.25,
                  pose_format='image', # 'image' or 'keypoint' or 'heatmap'
                  output_shape=(128, 128),
-                 merge_images=False
+                 merge_images=False,
+                 pose_dim=3,
                  ):
         """
         @param folder: Folder containing images and text files matched by their paths' respective "stem"
         @param truncate_captions: Rather than throw an exception, captions which are too long will be truncated.
         """
         super().__init__()
+        self.pose_visualizer = PoseVisualizer('keypoint')
         self.merge_images = merge_images
         self.pose_format = pose_format
+        self.pose_dim = pose_dim // 3 # 3 values per keypoints
         self.shuffle = shuffle
         self.df = pd.read_pickle(pickle_file)
-        #self.df = df[df.pose_score > threshold]
+        #self.df = self.df[self.df.num_persons <= 3]
         self.root_dir = Path(folder)
-
         self.text_len = text_len
         self.truncate_captions = truncate_captions
         self.resize_ratio = resize_ratio
@@ -111,13 +115,15 @@ class PoseDatasetPickle(Dataset):
         
         try:
             # augmentation, to do, multiple keypoints
-            padded_keypoints = pad_keypoints(keypoints, 4)
+            padded_keypoints = pad_keypoints(keypoints, self.pose_dim)
             #padded_keypoints = keypoints
             augmented = self.image_keypoint_transform({'image':image, 'keypoints':padded_keypoints})
             image_tensor, keypoints = augmented['image'], augmented['keypoints']
 
             if self.pose_format == 'keypoint':
                 pose_tensor = keypoints
+            elif self.pose_format == 'image':
+                pose_tensor = self.pose_visualizer.convert(keypoints)
             else:
                 raise(ValueError, f'f pose format of {self.pose_format}is undefined')
                 
@@ -183,11 +189,6 @@ class PoseDataset(Dataset):
         self.tokenizer = tokenizer
 
         self.image_transform = T.Compose([
-            T.Lambda(lambda img: img.convert('RGB')
-            if img.mode != 'RGB' else img),
-            #T.RandomResizedCrop(image_size,
-            #                    scale=(self.resize_ratio, 1.),
-            #                    ratio=(1., 1.)),
             T.ToTensor()
         ])
 

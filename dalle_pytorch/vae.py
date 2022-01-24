@@ -148,7 +148,7 @@ def instantiate_from_config(config):
     return get_obj_from_str(config["target"])(**config.get("params", dict()))
 
 class VQGanVAE(nn.Module):
-    def __init__(self, vqgan_model_path=None, vqgan_config_path=None):
+    def __init__(self, vqgan_model_path=None, vqgan_config_path=None, device='cpu'):
         super().__init__()
 
         if vqgan_model_path is None:
@@ -166,7 +166,7 @@ class VQGanVAE(nn.Module):
 
         model = instantiate_from_config(config["model"])
 
-        state = torch.load(model_path, map_location = 'cpu')['state_dict']
+        state = torch.load(model_path, map_location = device)['state_dict']
         model.load_state_dict(state, strict = False)
 
         print(f"Loaded VQGAN from {model_path} and {config_path}")

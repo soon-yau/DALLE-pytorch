@@ -45,8 +45,12 @@ parser.add_argument('--vqgan_config_path', type=str, default = None,
 parser.add_argument('--image_text_folder', type=str, required=True,
                     help='path to your folder of images and text for learning the DALL-E')
 
-parser.add_argument('--data_file', type=str, required=False,
-                    help='csv file for MPII/pose')
+parser.add_argument('--data_file', type=str, required=True,
+                    help='pickle file for training')
+
+parser.add_argument('--test_data_file', type=str, required=False, default=None,
+                    help='pickle file for testing')
+
 
 parser.add_argument('--data_type', type=str, required=False, default='image_text',
                     help='image_text, mpii, pose')
@@ -317,14 +321,6 @@ else:
 
     IMAGE_SIZE = vae.image_size
     NUM_POSE_TOKEN = 0
-    '''
-    if POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
-        NUM_POSE_TOKEN = 0
-        POSE_SEQ_LEN = 33 #FIX ME!
-    elif POSE_FORMAT == 'image':
-        NUM_POSE_TOKEN = 0
-        POSE_SEQ_LEN = 0  
-    '''
     dalle_params = dict(
         num_text_tokens=tokenizer.vocab_size,
         text_seq_len=TEXT_SEQ_LEN,
@@ -438,9 +434,22 @@ else:
             shuffle=is_shuffle,
             pose_format=POSE_FORMAT,
             merge_images=MERGE_IMAGES,
-            threshold=0.5
+            pose_dim=POSE_DIM
         )
-
+        test_data_file = args.test_data_file if  args.test_data_file else args.data_file        
+        test_ds = PoseDatasetPickle(
+            args.image_text_folder,
+            test_data_file,
+            text_len=TEXT_SEQ_LEN,
+            image_size=IMAGE_SIZE,
+            resize_ratio=args.resize_ratio,
+            truncate_captions=args.truncate_captions,
+            tokenizer=tokenizer,
+            shuffle=False,
+            pose_format=POSE_FORMAT,
+            merge_images=MERGE_IMAGES,
+            pose_dim=POSE_DIM
+        )
     else:
         ds = TextImageDataset(
             args.image_text_folder,
@@ -476,6 +485,7 @@ if ENABLE_WEBDATASET:
 else:
     # Regular DataLoader for image-text-folder datasets
     dl = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=is_shuffle, drop_last=True, sampler=data_sampler)
+    test_dl = iter(DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=True, sampler=data_sampler))
 
 
 # initialize DALL-E
@@ -521,13 +531,14 @@ if distr_backend.is_root_worker():
         heads=HEADS,
         dim_head=DIM_HEAD
     )
-
+    
     run = wandb.init(
         project=args.wandb_name,
         entity=args.wandb_entity,
         resume=False,
         config=model_config,
     )
+    
 
 # distribute
 
@@ -678,20 +689,22 @@ for epoch in range(resume_epoch, EPOCHS):
 	
         if i % args.display_freq == 0:
             if distr_backend.is_root_worker():
-                sample_text = text[:1]
+                test_text, test_images, test_poses = next(test_dl)
+                test_text, test_images, test_poses = map(lambda t: t.to(CUDA), (test_text, test_images, test_poses))
+                
+                sample_text = test_text[:1]
                 token_list = sample_text.masked_select(sample_text != 0).tolist()
                 decoded_text = tokenizer.decode(token_list)
 
                 if not avoid_model_calls:
                     # CUDA index errors when we don't guard this
-                    input_pose = poses[:1]                    
-                    image, output_pose = dalle.generate_images(text[:1], input_pose, filter_thres=0.9)  # topk sampling at 0.9
-                    input_pose_image = pose_visualizer.convert(input_pose)
+                    input_pose = test_poses[:1]                    
+                    image, output_pose = dalle.generate_images(test_text[:1], input_pose, filter_thres=0.9)  # topk sampling at 0.9
                     if POSE_FORMAT == 'image':
-                        b = pose_visualizer.convert(output_pose)
-                        same_pose = torch.cat((input_pose_image, b, image), dim=-1)
+                        same_pose = torch.cat((input_pose[0], image[0], test_images[0]), dim=-1)
                     elif POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
-                        same_pose = torch.cat((input_pose_image, image[0], images[0]), dim=-1)
+                        input_pose_image = pose_visualizer.convert(input_pose[0])
+                        same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
 
                 log = {
                     **log,
