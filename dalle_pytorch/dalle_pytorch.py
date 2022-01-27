@@ -332,7 +332,7 @@ class DALLE(nn.Module):
         num_pose_token = 0,
         pose_seq_len = 0,
         pose_dim = 3,
-        pose_downsample = 1,
+        pose_image_downscale = 1,
         pose_format = 'image',
     ):
         super().__init__()
@@ -344,6 +344,7 @@ class DALLE(nn.Module):
         image_fmap_size = (vae.image_size // (2 ** vae.num_layers))
         image_seq_len = image_fmap_size ** 2
         # FIX ME
+        print("image_seq_len", image_seq_len)
         image_seq_len = 256
         num_text_tokens = num_text_tokens + text_seq_len  # reserve unique padding tokens for each position (text seq len)
 
@@ -357,13 +358,14 @@ class DALLE(nn.Module):
         self.num_image_tokens = num_image_tokens        
         self.num_pose_tokens = num_pose_token if num_pose_token > 0 else num_image_tokens
         
-        self.pose_downsample = pose_downsample
+        self.pose_image_downscale = pose_image_downscale
         self.text_seq_len = text_seq_len
         self.image_seq_len = image_seq_len
 
         if num_pose_token > 0 and pose_seq_len == 0:
             pose_seq_len = image_seq_len
-        self.pose_seq_len = pose_seq_len//(pose_downsample**2)
+
+        self.pose_seq_len = pose_seq_len//(pose_image_downscale**2)
         seq_len = text_seq_len + image_seq_len + self.pose_seq_len
 
         total_tokens = num_text_tokens + num_image_tokens
@@ -489,10 +491,11 @@ class DALLE(nn.Module):
 
         if exists(pose):
             if self.pose_format == 'image':
-                image_size = vae.image_size
-                assert pose.shape[1] == 3 and pose.shape[2] == image_size and pose.shape[3] == image_size, f'input image must have the correct image size {image_size}'
+                #image_size = vae.image_size
+                #assert pose.shape[1] == 3 and pose.shape[2] == image_size and pose.shape[3] == image_size, f'input image must have the correct image size {image_size}'
 
                 indices = vae.get_codebook_indices(pose)
+                '''
                 if self.pose_downsample > 1:
                     h = int(np.sqrt(indices.shape[-1]))
                     batch_size = indices.shape[0]
@@ -500,7 +503,7 @@ class DALLE(nn.Module):
                     reshaped = torch.reshape(indices, (batch_size, h, h))
                     reshaped = reshaped[:,:new_size,:new_size]
                     indices = torch.reshape(reshaped, (batch_size,-1))
-
+                '''
                 #num_img_tokens = default(num_init_img_tokens, int(0.4375 * pose_seq_len))  # OpenAI used 14 * 32 initial tokens to prime
                 num_img_tokens = pose_seq_len
                 #assert num_img_tokens < pose_seq_len, 'number of initial image tokens for priming must be less than the total image token sequence length'
@@ -589,11 +592,10 @@ class DALLE(nn.Module):
                 is_raw_image = len(image.shape) == 4
 
                 if is_raw_image:
-                    image_size = self.vae.image_size
-                    assert tuple(pose.shape[1:]) == (3, image_size, image_size), f'invalid image of dimensions {image.shape} passed in during training'
-
+                    #image_size = self.vae.image_size
+                    #assert tuple(pose.shape[1:]) == (3, image_size, image_size), f'invalid image of dimensions {image.shape} passed in during training'
                     pose = self.vae.get_codebook_indices(pose)
-
+                    '''
                     if self.pose_downsample > 1:
                         h = int(np.sqrt(pose.shape[-1]))
                         batch_size = pose.shape[0]
@@ -601,7 +603,7 @@ class DALLE(nn.Module):
                         reshaped = torch.reshape(pose, (batch_size, h, h))
                         reshaped = reshaped[:,:new_size,:new_size]
                         pose = torch.reshape(reshaped, (batch_size,-1))
-                
+                    '''
                 pose_len = pose.shape[1]
                 pose_emb = self.image_emb(pose)
 

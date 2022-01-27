@@ -4,6 +4,7 @@ import time
 from glob import glob
 import os
 import shutil
+from itertools import cycle
 
 import torch
 import wandb  # Quit early if user doesn't have wandb installed.
@@ -14,7 +15,7 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDataset, PoseDatasetPickle
+from dalle_pytorch.loader import TextImageDataset, MPIIDataset, PoseDatasetPickle
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
 from dalle_pytorch.pose_utils import PoseVisualizer
 # libraries needed for webdataset support
@@ -63,6 +64,8 @@ parser.add_argument('--pose_dim', type=int, required=False,
                     help='dimension for pose. For keypoint use 3, for heatmap use heatmap size e.g. 64x64=4096')
 
 parser.add_argument('--pose_seq_len', type=int, required=False, default=0)
+parser.add_argument('--pose_image_downscale', type=int, required=False, default=1)
+
 parser.add_argument('--merge_images', dest='merge_images', action='store_true')
 
 parser.add_argument('--cuda', type=str, required=False, default='cuda:0',
@@ -225,7 +228,7 @@ POSE_DIM = args.pose_dim
 MERGE_IMAGES = args.merge_images
 POSE_SEQ_LEN = args.pose_seq_len
 
-pose_visualizer = PoseVisualizer(POSE_FORMAT)
+pose_visualizer = PoseVisualizer(POSE_FORMAT, (256, 256))
 if not ENABLE_WEBDATASET:
     # quit early if you used the wrong folder name
     assert Path(args.image_text_folder).exists(), f'The path {args.image_text_folder} was not found.'
@@ -339,7 +342,8 @@ else:
         num_pose_token=NUM_POSE_TOKEN,
         pose_seq_len=POSE_SEQ_LEN,
         pose_format=POSE_FORMAT,
-        pose_dim=POSE_DIM
+        pose_dim=POSE_DIM,
+        pose_image_downscale = args.pose_image_downscale
     )
     resume_epoch = 0
 
@@ -422,7 +426,8 @@ else:
             shuffle=is_shuffle,
         )
     elif DATA_TYPE == 'pose':
-        #ds = PoseDataset(
+        pose_image_shape = (256//args.pose_image_downscale, 256//args.pose_image_downscale)
+        print("pose_image_shape", pose_image_shape)
         ds = PoseDatasetPickle(
             args.image_text_folder,
             args.data_file,
@@ -434,7 +439,8 @@ else:
             shuffle=is_shuffle,
             pose_format=POSE_FORMAT,
             merge_images=MERGE_IMAGES,
-            pose_dim=POSE_DIM
+            pose_dim=POSE_DIM,
+            pose_image_shape = pose_image_shape
         )
         test_data_file = args.test_data_file if  args.test_data_file else args.data_file        
         test_ds = PoseDatasetPickle(
@@ -448,7 +454,8 @@ else:
             shuffle=False,
             pose_format=POSE_FORMAT,
             merge_images=MERGE_IMAGES,
-            pose_dim=POSE_DIM
+            pose_dim=POSE_DIM,
+            pose_image_shape = pose_image_shape
         )
     else:
         ds = TextImageDataset(
@@ -485,7 +492,7 @@ if ENABLE_WEBDATASET:
 else:
     # Regular DataLoader for image-text-folder datasets
     dl = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=is_shuffle, drop_last=True, sampler=data_sampler)
-    test_dl = iter(DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, drop_last=True, sampler=data_sampler))
+    test_dl = iter(cycle(DataLoader(test_ds, batch_size=1, shuffle=False, drop_last=True, sampler=data_sampler)))
 
 
 # initialize DALL-E
@@ -701,10 +708,10 @@ for epoch in range(resume_epoch, EPOCHS):
                     input_pose = test_poses[:1]                    
                     image, output_pose = dalle.generate_images(test_text[:1], input_pose, filter_thres=0.9)  # topk sampling at 0.9
                     if POSE_FORMAT == 'image':
-                        same_pose = torch.cat((input_pose[0], image[0], test_images[0]), dim=-1)
+                        input_pose_image = T.Resize((256, 256))(input_pose[0])
                     elif POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
                         input_pose_image = pose_visualizer.convert(input_pose[0])
-                        same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
+                    same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
 
                 log = {
                     **log,

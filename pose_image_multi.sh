@@ -6,14 +6,16 @@ python3 train_dalle.py \
 --data_file ~/datasets/mannequin_multi/pose_multi_train.pickle \
 --test_data_file ~/datasets/mannequin_multi/pose_multi_test.pickle \
 --data_type pose \
---pose_format keypoint \
---pose_seq_len 25 \
+--pose_format image \
+--pose_seq_len 256 \
 --pose_dim 9 \
+--pose_image_downscale 1 \
 --wandb_name dalle_mannequin_pose_final \
 --taming \
 --vqgan_config_path ../VQGAN-CLIP/checkpoints/vqgan_mannequin.yaml \
 --vqgan_model_path ../VQGAN-CLIP/checkpoints/vqgan_mannequin.ckpt \
---cuda cuda:1  \
+--cuda cuda:0  \
 --hug --bpe_path /home/soon/github/PoseGuidedTextToImage/tokenizer-mannequin.json \
---dalle_output_file_name checkpoints/final/dalle_mannequin_pose_kp \
---display_freq 250
+--dalle_output_file_name checkpoints/final/dalle_mannequin_pose_image_256 \
+--display_freq 250 \
+#--dalle_path dalle_mannequin_pose_multi_4.pt

@@ -136,14 +136,14 @@ def heatmap_to_skeleton(heatmaps):
     return skeleton_img.to(heatmaps.device)
 
 class PoseVisualizer:
-    def __init__(self, pose_format):
+    def __init__(self, pose_format, image_shape=(256, 256)):
         self.pose_format = pose_format
         if self.pose_format == 'image':
             self.fn = lambda x: x
         elif self.pose_format == 'heatmap':
             self.fn = lambda x: heatmap_to_skeleton(x[0])
         elif self.pose_format == 'keypoint':
-            kp2im = Keypoints2Image('openpose_body_25')
+            kp2im = Keypoints2Image('openpose_body_25', image_shape)
             self.fn = lambda x : kp2im(x)
         else:
             raise(ValueError)
