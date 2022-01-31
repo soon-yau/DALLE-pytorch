@@ -306,8 +306,22 @@ class CLIP(nn.Module):
         loss = (F.cross_entropy(sim, labels) + F.cross_entropy(sim.t(), labels)) / 2
         return loss
 
-# main DALL-E class
+class PoseConcatEncoder(torch.nn.Module):
+    def __init__(self, transformer_dim):
+        super(PoseConcatEncoder, self).__init__()
+        self.transformer_dim  = transformer_dim        
 
+    def forward(self, x):
+        #print("before", x.shape)
+        batch_size, n_keypoints, n_elements = x.shape
+        assert n_elements<=self.transformer_dim, \
+               "Number of keypoints exceed transformer dimension. Use linear layer for pose encoding."        
+        z = torch.zeros((batch_size, n_keypoints, self.transformer_dim), device=x.device)
+        z[:,:,:n_elements] = x
+        #print("after", z.shape)
+        return z
+
+# main DALL-E class
 class DALLE(nn.Module):
     def __init__(
         self,
@@ -373,6 +387,7 @@ class DALLE(nn.Module):
         self.total_seq_len = seq_len
         self.vae = vae
         self.pose_encoder = nn.Linear(pose_dim, dim) 
+        #self.pose_encoder = PoseConcatEncoder(dim)
         set_requires_grad(self.vae, False) # freeze VAE from being trained
 
         self.transformer = Transformer(
@@ -620,6 +635,7 @@ class DALLE(nn.Module):
                 pose_emb = self.pose_encoder(pose)
                 #pose_pos = self.pose_pos_emb(torch.arange(25, device = tokens.device))
                 #pose_emb += pose_pos
+
                 tokens = torch.cat((tokens, pose_emb), dim = 1)
             else:
                 raise(ValueError, f"Invalid pose format f{self.pose_format}")

@@ -6,15 +6,15 @@ python3 train_dalle.py \
 --data_file ~/github/PoseGuidedTextToImage/dataset/pose_openpose_deepfashion_inshop_train.pickle \
 --test_data_file ~/github/PoseGuidedTextToImage/dataset/pose_openpose_deepfashion_inshop_test.pickle \
 --data_type pose \
---pose_format keypoint \
---pose_seq_len 25 \
+--pose_format image \
+--pose_seq_len 256 \
 --pose_dim 3 \
 --wandb_name dalle_deepfashion_final \
 --taming \
 --vqgan_config_path ../VQGAN-CLIP/checkpoints/deepfashion.yaml \
 --vqgan_model_path ../VQGAN-CLIP/checkpoints/deepfashion_1225_45.ckpt \
---cuda cuda:1  \
+--cuda cuda:3  \
 --hug --bpe_path /home/soon/github/PoseGuidedTextToImage/tokenizer-mannequin.json \
---dalle_output_file_name checkpoints/final/dalle_deepfashion_kp \
+--dalle_output_file_name checkpoints/final/dalle_deepfashion_image_256 \
 --display_freq 200 \
---dalle_path checkpoints/final/dalle_deepfashion_kp.pt
+--dalle_path checkpoints/final/dalle_deepfashion_image_256.pt

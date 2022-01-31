@@ -8,8 +8,9 @@ import torch
 from itertools import cycle
 
 class Keypoints2Image:
-    def __init__(self, mode='openpose_body_25', image_shape=(256, 256)):
+    def __init__(self, mode='openpose_body_25', image_shape=(256, 256), background_white=False):
 
+        self.background_white = background_white
         self.height = image_shape[0]
         self.width = image_shape[1]
         
@@ -62,8 +63,10 @@ class Keypoints2Image:
         return tuple((x, y))
     
     def __call__(self, keypoints, threshold = 0.0):
-        
-        img = np.zeros((self.height, self.width, 3), np.uint8)
+        if self.background_white:
+            img = 255 * np.ones((self.height, self.width, 3), np.uint8)
+        else:
+            img = np.zeros((self.height, self.width, 3), np.uint8)
         for person in keypoints:
             for points, color in self.segments:
                 kp1 = person[points[0]]
@@ -72,9 +75,11 @@ class Keypoints2Image:
                     cv2.line(img, self._get_coords(kp1), 
                              self._get_coords(kp2), color, 2)
 
-        img =img/255.
+        #img =img/255.
         if type(keypoints) == torch.Tensor:
             img = T.ToTensor()(img.astype(np.float32)).to(keypoints.device)
+        else:
+            img = img.astype(np.uint8)
         return img
 
 def keypoints_to_heatmap(keypoints,
@@ -136,14 +141,14 @@ def heatmap_to_skeleton(heatmaps):
     return skeleton_img.to(heatmaps.device)
 
 class PoseVisualizer:
-    def __init__(self, pose_format, image_shape=(256, 256)):
+    def __init__(self, pose_format, image_shape=(256, 256), background_white=False):
         self.pose_format = pose_format
         if self.pose_format == 'image':
             self.fn = lambda x: x
         elif self.pose_format == 'heatmap':
             self.fn = lambda x: heatmap_to_skeleton(x[0])
         elif self.pose_format == 'keypoint':
-            kp2im = Keypoints2Image('openpose_body_25', image_shape)
+            kp2im = Keypoints2Image('openpose_body_25', image_shape, background_white)
             self.fn = lambda x : kp2im(x)
         else:
             raise(ValueError)

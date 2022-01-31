@@ -42,7 +42,8 @@ class PoseDatasetPickle(Dataset):
         self.pose_dim = pose_dim // 3 # 3 values per keypoints
         self.shuffle = shuffle
         self.df = pd.read_pickle(pickle_file)
-        self.df = self.df[self.df.num_persons <= 3]
+        if "num_persons" in list(self.df.columns):
+            self.df = self.df[self.df.num_persons <= 3]
         self.root_dir = Path(folder)
         self.text_len = text_len
         self.truncate_captions = truncate_captions

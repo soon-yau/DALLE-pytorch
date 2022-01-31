@@ -511,15 +511,15 @@ if RESUME and not using_deepspeed:
 # optimizer
 
 opt = Adam(get_trainable_params(dalle), lr=LEARNING_RATE)
-#if RESUME and opt_state:
-#    opt.load_state_dict(opt_state)
+if RESUME and opt_state:
+    opt.load_state_dict(opt_state)
 
 if LR_DECAY:
     scheduler = ReduceLROnPlateau(
         opt,
         mode="min",
         factor=0.5,
-        patience=0,
+        patience=EPOCHS//8,
         cooldown=0,
         min_lr=1e-6,
         threshold = 0.1,
