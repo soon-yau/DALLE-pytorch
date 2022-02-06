@@ -228,7 +228,8 @@ POSE_DIM = args.pose_dim
 MERGE_IMAGES = args.merge_images
 POSE_SEQ_LEN = args.pose_seq_len
 
-pose_visualizer = PoseVisualizer(POSE_FORMAT, (256, 256))
+if POSE_FORMAT != 'no_pose':
+    pose_visualizer = PoseVisualizer(POSE_FORMAT, (256, 256))
 if not ENABLE_WEBDATASET:
     # quit early if you used the wrong folder name
     assert Path(args.image_text_folder).exists(), f'The path {args.image_text_folder} was not found.'
@@ -709,9 +710,13 @@ for epoch in range(resume_epoch, EPOCHS):
                     image, output_pose = dalle.generate_images(test_text[:1], input_pose, filter_thres=0.9)  # topk sampling at 0.9
                     if POSE_FORMAT == 'image':
                         input_pose_image = T.Resize((256, 256))(input_pose[0])
+                        same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
                     elif POSE_FORMAT == 'heatmap' or POSE_FORMAT == 'keypoint':
                         input_pose_image = pose_visualizer.convert(input_pose[0])
-                    same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
+                        same_pose = torch.cat((input_pose_image, image[0], test_images[0]), dim=-1)
+                    elif POSE_FORMAT == 'no_pose':
+                        same_pose = torch.cat((image[0], test_images[0]), dim=-1)
+                    
 
                 log = {
                     **log,

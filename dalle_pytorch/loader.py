@@ -127,7 +127,8 @@ class PoseDatasetPickle(Dataset):
             elif self.pose_format == 'image':
                 pose_tensor = self.pose_visualizer.convert(keypoints)
             else:
-                raise(ValueError, f'f pose format of {self.pose_format}is undefined')
+                pose_tensor = keypoints
+                #raise(ValueError, f'f pose format of {self.pose_format}is undefined')
                 
         except (PIL.UnidentifiedImageError, OSError) as corrupt_image_exceptions:
             print(f"An exception occurred trying to load file {image_file}.")

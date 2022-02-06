@@ -358,7 +358,6 @@ class DALLE(nn.Module):
         image_fmap_size = (vae.image_size // (2 ** vae.num_layers))
         image_seq_len = image_fmap_size ** 2
         # FIX ME
-        print("image_seq_len", image_seq_len)
         image_seq_len = 256
         num_text_tokens = num_text_tokens + text_seq_len  # reserve unique padding tokens for each position (text seq len)
 
@@ -376,8 +375,8 @@ class DALLE(nn.Module):
         self.text_seq_len = text_seq_len
         self.image_seq_len = image_seq_len
 
-        if num_pose_token > 0 and pose_seq_len == 0:
-            pose_seq_len = image_seq_len
+        #if num_pose_token > 0 and pose_seq_len == 0:
+        #    pose_seq_len = image_seq_len
 
         self.pose_seq_len = pose_seq_len//(pose_image_downscale**2)
         seq_len = text_seq_len + image_seq_len + self.pose_seq_len
@@ -386,7 +385,8 @@ class DALLE(nn.Module):
         self.total_tokens = total_tokens
         self.total_seq_len = seq_len
         self.vae = vae
-        self.pose_encoder = nn.Linear(pose_dim, dim) 
+        if pose_seq_len > 0:
+            self.pose_encoder = nn.Linear(pose_dim, dim) 
         #self.pose_encoder = PoseConcatEncoder(dim)
         set_requires_grad(self.vae, False) # freeze VAE from being trained
 
@@ -529,6 +529,8 @@ class DALLE(nn.Module):
                 pose_seq = pose
                 out = F.pad(out, (pose_seq_len, 0), value = 0)
                 #out = torch.cat((out, pose), dim = -1)
+            elif self.pose_format == 'no_pose':
+                pose_seq = pose #dummy
         '''
         if exists(img):
             image_size = vae.image_size
@@ -637,6 +639,8 @@ class DALLE(nn.Module):
                 #pose_emb += pose_pos
 
                 tokens = torch.cat((tokens, pose_emb), dim = 1)
+            elif self.pose_format == 'no_pose':
+                pose_len = 0
             else:
                 raise(ValueError, f"Invalid pose format f{self.pose_format}")
             seq_len += pose_len
@@ -702,14 +706,17 @@ class DALLE(nn.Module):
 
         loss_text = F.cross_entropy(logits[:, :, :self.text_seq_len], text[:, 1:])
         loss_img = F.cross_entropy(logits[:, :, pose_offset:], offsetted_image)
+        pose_weight = 10.
+
         if self.pose_format == 'image':
             loss_pose = F.cross_entropy(logits[:, :, self.text_seq_len:pose_offset], offsetted_pose)
         elif self.pose_format == 'heatmap' or self.pose_format == 'keypoint':
             loss_pose = F.mse_loss(out[:, self.text_seq_len:pose_offset,:], offsetted_pose)
-
-        pose_weight = 10.
+        elif self.pose_format == 'no_pose':
+            loss_pose = 0.
         loss = (loss_text + pose_weight*loss_pose + self.loss_img_weight * loss_img) / (self.loss_img_weight + 1)
         return loss, {'total_loss':loss.item(),
                 'text_loss':loss_text.item(),
                 'image_loss':(self.loss_img_weight*loss_img).item(),
-                'pose_loss':(pose_weight*loss_pose).item()}
+                'image_loss': 0.}
+                #'pose_loss':(pose_weight*loss_pose).item()}

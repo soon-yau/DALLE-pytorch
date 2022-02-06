@@ -75,8 +75,9 @@ class Keypoints2Image:
                     cv2.line(img, self._get_coords(kp1), 
                              self._get_coords(kp2), color, 2)
 
-        #img =img/255.
+        
         if type(keypoints) == torch.Tensor:
+            img =img/255.
             img = T.ToTensor()(img.astype(np.float32)).to(keypoints.device)
         else:
             img = img.astype(np.uint8)
